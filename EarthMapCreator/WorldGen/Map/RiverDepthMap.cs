@@ -3,17 +3,14 @@ using Vintagestory.API.Datastructures;
 
 namespace EarthMapCreator;
 
-public class RiverMap : DataMap<Rgb24>
+/// <summary>Loads per-column river depth in blocks from river_depth.png.</summary>
+public class RiverDepthMap : DataMap<Rgb24>
 {
-    
-    public RiverMap(string filePath) : base(filePath)
+    public RiverDepthMap(string filePath) : base(filePath)
     {
-        // Strict binary footprint: black is dry, white is river.
-        
         int xRegions = Bitmap.Width / 512;
         int zRegions = Bitmap.Height / 512;
         IntValues = new IntDataMap2D[xRegions][];
-        
         for (int x = 0; x < xRegions; x++)
         {
             IntValues[x] = new IntDataMap2D[zRegions];
@@ -22,20 +19,16 @@ public class RiverMap : DataMap<Rgb24>
                 IntValues[x][z] = IntDataMap2D.CreateEmpty();
                 IntValues[x][z].Size = 512;
                 IntValues[x][z].Data = new int[512 * 512];
-                
                 for (int i = 0; i < 512; i++)
                 {
                     for (int j = 0; j < 512; j++)
                     {
-                        int posX = x * 512 + i;
-                        int posZ = z * 512 + j;
-                        Rgb24 pixel = Bitmap[posX, posZ];
+                        Rgb24 pixel = Bitmap[x * 512 + i, z * 512 + j];
                         IntValues[x][z].SetInt(i, j, pixel.R);
                     }
                 }
             }
         }
-        
         Bitmap.Dispose();
     }
 }

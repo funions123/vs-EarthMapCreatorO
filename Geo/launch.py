@@ -85,7 +85,7 @@ def main():
     tree.run(WORK_DIR, DATASETS_DIR, grid, bounds, cfg)
 
     log("=== Stage: translate ===")
-    translate.run(WORK_DIR, grid, cfg)
+    translate.run(WORK_DIR, grid, bounds, cfg)
 
     log("=== Pipeline complete. PNGs in: " + str(BUILD_DIR) + " ===")
 

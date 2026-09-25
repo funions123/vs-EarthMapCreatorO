@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <!-- Copy to localSettings.props (ignored by Git) and set paths for this machine. -->
+    <GameDirectory>C:\path\to\Vintagestory</GameDirectory>
+    <DataFolder>C:\path\to\VintagestoryData</DataFolder>
+  </PropertyGroup>
+</Project>

@@ -12,6 +12,4 @@ public class Config {
     public double PrecipitationMulti = 1.0;
     public double TemperatureMulti = 1.0;
     public double ForestMulti = 4.0;
-
-    public static int RiverDepth = 4;
 }

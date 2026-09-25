@@ -8,12 +8,14 @@ using Vintagestory.API.Datastructures;
 namespace EarthMapCreator;
 
 public class MapLayers {
-    public DataMap<Rgb48> CompleteTopoMap { get; private set; }
     public DataMap<Rgb48> HeightMap { get; private set; }
+    public DataMap<Rgb24> LakeDepthMap { get; private set; }
     public DataMap<Rgb48> OceanBathyMap { get; private set; }
     public DataMap<Rgb24> ClimateMap { get; private set; }
     public DataMap<Rgb24> TreeMap { get; private set; }
     public DataMap<Rgb24> RiverMap { get; private set; }
+    public DataMap<Rgb24> RiverSurfaceMap { get; private set; }
+    public DataMap<Rgb24> RiverDepthMap { get; private set; }
     public DataMap<Rgb24> LakeMaskMap { get; private set; }
     public DataMap<Rgb24> LandMaskMap { get; private set; }
 
@@ -26,7 +28,7 @@ public class MapLayers {
             Console.WriteLine(file);
         }
         
-        var completeTopoFile = files.First(n => Path.GetFileName(n) == "complete_topo.png");
+        var lakeDepthFile = files.First(n => Path.GetFileName(n) == "lake_depth.png");
         var lakeMaskFile = files.First(n => Path.GetFileName(n) == "lake_mask.png");
         var heightmapFile = files.First(n => Path.GetFileName(n) == "heightmap.png");
         var bathymapFile = files.First(n => Path.GetFileName(n) == "bathymetry_heightmap.png");
@@ -34,12 +36,16 @@ public class MapLayers {
         var climateFile = files.First(n => Path.GetFileName(n) == "climate.png");
         var treeFile = files.First(n => Path.GetFileName(n) == "tree.png");
         var riverFile = files.First(n => Path.GetFileName(n) == "river.png");
+        var riverSurfaceFile = files.First(n => Path.GetFileName(n) == "river_surface.png");
+        var riverDepthFile = files.First(n => Path.GetFileName(n) == "river_depth.png");
         
+        LakeDepthMap = new LakeDepthMap(lakeDepthFile);
         LakeMaskMap = new LakeMaskMap(lakeMaskFile);
         LandMaskMap = new LandMaskMap(landmaskFile);
         
         RiverMap = new RiverMap(riverFile);
-        CompleteTopoMap = new TopoMap(completeTopoFile, landmaskFile);
+        RiverSurfaceMap = new RiverSurfaceMap(riverSurfaceFile);
+        RiverDepthMap = new RiverDepthMap(riverDepthFile);
         HeightMap = new HeightMap(heightmapFile, landmaskFile);
         OceanBathyMap = new OceanBathymetryMap(bathymapFile, landmaskFile);
         ClimateMap = new ClimateMap(climateFile);
@@ -58,10 +64,10 @@ public abstract class DataMap<T> where T : unmanaged, IPixel<T>
         Bitmap = LoadBitmap<T>(filePath);
     }
 
-    protected static Image<T> LoadBitmap<T>(string filePath) where T : unmanaged, IPixel<T>
+    protected static Image<TPixel> LoadBitmap<TPixel>(string filePath) where TPixel : unmanaged, IPixel<TPixel>
     {
         var config = EarthMapCreator.config;
-        var img = Image.Load<T>(filePath);
+        var img = Image.Load<TPixel>(filePath);
 
         var width = img.Width;
         var height = img.Height;

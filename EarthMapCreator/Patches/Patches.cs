@@ -11,9 +11,7 @@ namespace EarthMapCreator.Patches;
 
 // --- Delegates for Private Methods ---
 // Define a delegate matching the signature of GenBlockLayers.PutLayers
-internal delegate int PutLayersDelegate(GenBlockLayers instance, double posRand, int lx, int lz, int posyoffs, BlockPos pos, IServerChunk[] chunks, float rainRel, float temp, int unscaledTemp, ushort[] heightMap);
-// Define a delegate matching the signature of GenBlockLayers.PlaceTallGrass
-internal delegate void PlaceTallGrassDelegate(GenBlockLayers instance, int x, int posY, int z, IServerChunk[] chunks, float rainRel, float tempRel, float temp, float forestRel);
+internal delegate int PutLayersDelegate(GenBlockLayers instance, double posRand, int lx, int lz, int posyoffs, BlockPos pos, IServerChunk[] chunks, float rainRel, float temp, int unscaledTemp, ushort[] heightMap, int biome);
 
 public class EarthMapPatches : ModSystem
 {
@@ -48,24 +46,15 @@ public class EarthMapPatches : ModSystem
 [HarmonyPatchCategory("earthmapcreatoro")]
 internal static class Patches
 {
-    private static readonly AccessTools.FieldRef<GenBlockLayers, SimplexNoise> 
-        distort2dxRef = AccessTools.FieldRefAccess<GenBlockLayers, SimplexNoise>("distort2dx");
-    
-    // Private Method Delegates (Initialized once)
+    // Private method delegate, bound once when the mod starts.
     private static PutLayersDelegate PutLayers;
-    private static PlaceTallGrassDelegate PlaceTallGrass;
     
     public static void InitAccessors()
     {
         Type gblType = typeof(GenBlockLayers);
         
-        // --- PutLayers Delegate ---
-        MethodInfo putLayersMethod = AccessTools.Method(gblType, "PutLayers", new Type[] { typeof(double), typeof(int), typeof(int), typeof(int), typeof(BlockPos), typeof(IServerChunk[]), typeof(float), typeof(float), typeof(int), typeof(ushort[]) });
+        MethodInfo putLayersMethod = AccessTools.Method(gblType, "PutLayers", new Type[] { typeof(double), typeof(int), typeof(int), typeof(int), typeof(BlockPos), typeof(IServerChunk[]), typeof(float), typeof(float), typeof(int), typeof(ushort[]), typeof(int) });
         PutLayers = (PutLayersDelegate)Delegate.CreateDelegate(typeof(PutLayersDelegate), putLayersMethod);
-
-        // --- PlaceTallGrass Delegate ---
-        MethodInfo placeTallGrassMethod = AccessTools.Method(gblType, "PlaceTallGrass", new Type[] { typeof(int), typeof(int), typeof(int), typeof(IServerChunk[]), typeof(float), typeof(float), typeof(float), typeof(float) });
-        PlaceTallGrass = (PlaceTallGrassDelegate)Delegate.CreateDelegate(typeof(PlaceTallGrassDelegate), placeTallGrassMethod);
     }
 
 
@@ -73,11 +62,9 @@ internal static class Patches
     [HarmonyPatch(typeof(GenBlockLayers), "OnChunkColumnGeneration", new Type[] { typeof(IChunkColumnGenerateRequest) })]
     public static bool GenBlockLayers_OnChunkColumnGen_Prefix(GenBlockLayers __instance, IChunkColumnGenerateRequest request)
     {
-        // --- Accessing Private Fields ---
         var api = EarthMapPatches._api;
         var mapheight = api.WorldManager.MapSizeY;
         var chunksize = api.WorldManager.ChunkSize;
-        var distort2dx = distort2dxRef(__instance);
         
         // --- Core Logic ---
         var chunks = request.Chunks;
@@ -87,6 +74,7 @@ internal static class Patches
         // Your patched OnChunkColumnGeneration still requires the climate map data
         IntDataMap2D forestMap = chunks[0].MapChunk.MapRegion.ForestMap;
         IntDataMap2D climateMap = chunks[0].MapChunk.MapRegion.ClimateMap;
+        IntDataMap2D biomeMap = chunks[0].MapChunk.MapRegion.BiomeMap;
         
         ushort[] heightMap = chunks[0].MapChunk.RainHeightMap;
 
@@ -97,6 +85,7 @@ internal static class Patches
         // Amount of data points per chunk
         float climateStep = (float)climateMap.InnerSize / regionChunkSize;
         float forestStep = (float)forestMap.InnerSize / regionChunkSize;
+        float biomeStep = biomeMap == null ? 0 : (float)biomeMap.InnerSize / regionChunkSize;
 
         // Retrieves the map data on the chunk edges
         int forestUpLeft = forestMap.GetUnpaddedInt((int)(rdx * forestStep), (int)(rdz * forestStep));
@@ -107,13 +96,16 @@ internal static class Patches
         // increasing x -> left to right
         // increasing z -> top to bottom
         float transitionSize = __instance.blockLayerConfig.blockLayerTransitionSize;
-        BlockPos herePos = new BlockPos();
+        BlockPos herePos = new BlockPos(0);
 
 
         for (int x = 0; x < chunksize; x++)
         {
             for (int z = 0; z < chunksize; z++)
             {
+                int biome = biomeMap == null ? 0 : biomeMap.GetUnpaddedInt(
+                    (int)(rdx * biomeStep + (float)x / chunksize * biomeStep),
+                    (int)(rdz * biomeStep + (float)z / chunksize * biomeStep));
                 herePos.Set(chunkX * chunksize + x, 1, chunkZ * chunksize + z);
                 
                 // Keep posRand for transitionRand calculation, removed climate jittering call
@@ -150,20 +142,15 @@ internal static class Patches
 
                 int rockblockID = chunks[chunkY].Data.GetBlockIdUnsafe(index3d);
                 var hereblock = api.World.Blocks[rockblockID];
-                if (hereblock.BlockMaterial != EnumBlockMaterial.Stone && hereblock.BlockMaterial != EnumBlockMaterial.Liquid)
+                if (hereblock.BlockMaterial != EnumBlockMaterial.Stone && hereblock.BlockMaterial != EnumBlockMaterial.Water)
                 {
                     continue;
                 }
 
                 herePos.Y = posY;
-                // Use the retrieved distort2dx field
-                int disty = (int)(distort2dx.Noise(-herePos.X, -herePos.Z) / 4.0);
-                
-                // *** Calling Private Method via Delegate ***
-                PutLayers(__instance, transitionRand, x, z, disty, herePos, chunks, rainRel, temp, tempUnscaled, heightMap);
-
-                // *** Calling Private Method via Delegate ***
-                PlaceTallGrass(__instance, x, posY, z, chunks, rainRel, tempRel, temp, forestRel);
+                int disty = (int)(__instance.distort2dx.Noise(-herePos.X, -herePos.Z) / 4.0);
+                PutLayers(__instance, transitionRand, x, z, disty, herePos, chunks, rainRel, temp, tempUnscaled, heightMap, biome);
+                __instance.PlaceTallGrass(x, posY, z, chunks, rainRel, tempRel, temp, forestRel, biome);
             }
         }
         
@@ -196,19 +183,16 @@ internal static class Patches
     public static bool GetForestMapGen_Prefix(long seed, int scale, ref MapLayerBase __result)
     {
         var sapi = EarthMapPatches._api;
-        if (sapi == null) return true; 
+        if (sapi == null || seed != sapi.WorldManager.Seed + 2 || scale != TerraGenConfig.forestMapScale)
+        {
+            return true; // Shrub and biome generators must retain their vanilla data.
+        }
 
         sapi.Logger.Notification("[EarthMapCreator] Harmony patch triggered: Overwriting GetForestMapGen.");
 
-        __result = new MapLayerFromImage(seed, EarthMapCreator.Layers.TreeMap.IntValues, sapi, TerraGenConfig.forestMapScale, Climate.ForestPostProcess);
+        __result = new MapLayerFromImage(seed, EarthMapCreator.Layers.TreeMap.IntValues, sapi, scale, Climate.ForestPostProcess);
         
         return false; // Skip the original method
     }
     
-    [HarmonyPrefix]
-    [HarmonyPatch(typeof(GenBlockLayers), "GenBeach", new Type[] { typeof(int), typeof(int), typeof(int), typeof(IServerChunk[]), typeof(float), typeof(float), typeof(float), typeof(int) })]
-    public static bool GenBeach_Prefix(GenBlockLayers __instance, int x, int posY, int z, IServerChunk[] chunks, float rainRel, float temp, float beachRel, int topRockId)
-    {
-        return false;
-    }
 }

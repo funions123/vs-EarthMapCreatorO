@@ -24,9 +24,7 @@ def run(work_dir: Path, datasets_dir: Path, grid: MasterGrid, bounds: Bounds4326
       - work_dir/bathymetry/crop.tif              (Int16, master grid, GEBCO)
       - work_dir/bathymetry.tif                   (Byte, scaled ocean depths)
       - work_dir/dem/crop_gmted_for_lakes.tif     (Int16, master grid)
-      - work_dir/cropped_dem.tif                  (UInt16, land surface with lake levels)
-      - work_dir/complete_topo.tif                (UInt16, GEBCO land reference)
-      - work_dir/lakes_mask.tif                   (Byte, binary lake mask)
+      - work_dir/cropped_dem.tif                  (UInt16, baseline land/lake elevations)
     """
     bathy_dir = work_dir / "bathymetry"
     dem_dir = work_dir / "dem"
@@ -94,22 +92,16 @@ def run(work_dir: Path, datasets_dir: Path, grid: MasterGrid, bounds: Bounds4326
     save_array(bathy_scaled, str(work_dir / "bathymetry.tif"), grid, dtype="uint8", nodata=0)
 
     # ------------------------------------------------------------------ #
-    # 4. Normalize land elevations to common UInt16 range
+    # 4. Encode signed elevations as absolute Vintage Story world Y.
+    #    This preserves depressions such as the Dead Sea below Y=92.
     # ------------------------------------------------------------------ #
-    gebco_land = np.where(gebco_arr >= 0, gebco_arr, 0).astype(np.float64)
-    gmted_land = np.where(gmted_arr >= 0, gmted_arr, 0).astype(np.float64)
-
-    max_gebco = float(gebco_land.max()) if gebco_land.max() > 0 else 1.0
-    max_gmted = float(gmted_land.max()) if gmted_land.max() > 0 else 1.0
-    abs_max_elev = max(max_gebco, max_gmted)
-
-    gebco_norm = rescale(gebco_land, 0, abs_max_elev, 0, 65535, np.uint16)
-    gmted_norm = rescale(gmted_land, 0, abs_max_elev, 0, 65535, np.uint16)
+    gebco_y = _encode_terrain_y(gebco_arr, cfg)
+    gmted_y = _encode_terrain_y(gmted_arr, cfg)
 
     gebco_norm_path = bathy_dir / "gebco_land_normalized.tif"
     gmted_norm_path = dem_dir / "dem_land_normalized.tif"
-    save_array(gebco_norm, str(gebco_norm_path), grid, dtype="uint16", nodata=0)
-    save_array(gmted_norm, str(gmted_norm_path), grid, dtype="uint16", nodata=0)
+    save_array(gebco_y, str(gebco_norm_path), grid, dtype="uint8", nodata=0)
+    save_array(gmted_y, str(gmted_norm_path), grid, dtype="uint8", nodata=0)
 
     # ------------------------------------------------------------------ #
     # 5. Build initial lake mask from crop_lakes.gpkg
@@ -143,21 +135,16 @@ def run(work_dir: Path, datasets_dir: Path, grid: MasterGrid, bounds: Bounds4326
     align_to_grid(str(work_dir / "lakes_mask_initial.tif"), str(lakes_mask_aligned_path), grid)
 
     # ------------------------------------------------------------------ #
-    # 7. Merge GEBCO + GMTED (port of topography_processor.py)
+    # 7. Use GMTED at inland lakes to seed their surface estimates. The final
+    # polygon footprint, level, bed and bank are computed after PNG resizing.
     # ------------------------------------------------------------------ #
     _merge_topography(
         gmted_aligned,
         gebco_aligned,
         lakes_mask_aligned_path,
         work_dir / "cropped_dem.tif",
-        work_dir / "lakes_mask.tif",
         grid,
     )
-
-    # ------------------------------------------------------------------ #
-    # 8. complete_topo.tif = GEBCO land reference
-    # ------------------------------------------------------------------ #
-    shutil.copy(gebco_aligned, work_dir / "complete_topo.tif")
     print("[topo] Topography processing done.")
 
 
@@ -263,6 +250,17 @@ def _scale_bathymetry(
     return np.clip(result, 0, 255).astype(np.uint8)
 
 
+def _encode_terrain_y(elevation_metres: np.ndarray, cfg) -> np.ndarray:
+    """Encode signed metres as absolute world Y; zero remains the sea datum."""
+    elevation = elevation_metres.astype(np.float64)
+    invalid = (elevation <= -32768) | ~np.isfinite(elevation)
+    world_y = float(cfg.TERRAIN_SEA_LEVEL_Y) + np.rint(
+        elevation / float(cfg.TERRAIN_METRES_PER_BLOCK)
+    )
+    world_y = np.clip(world_y, 1, int(cfg.TERRAIN_MAX_Y)).astype(np.uint8)
+    world_y[invalid] = 0
+    return world_y
+
 def _rasterize_lakes(gpkg_path: Path, grid: MasterGrid, bounds: Bounds4326) -> np.ndarray:
     """Rasterize lake polygons onto the master grid (1=lake, 0=no lake)."""
     if not gpkg_path.exists():
@@ -299,13 +297,9 @@ def _merge_topography(
     gebco_path: Path,
     mask_path: Path,
     out_dem_path: Path,
-    out_mask_path: Path,
     grid: MasterGrid,
 ):
-    """
-    Inline port of topography_processor.py.
-    is_high_lake = (mask == 1) & (gebco > 0) → use GMTED; else use GEBCO.
-    """
+    """Use GMTED world Y within every lake footprint, GEBCO elsewhere."""
     with rasterio.open(str(gmted_path)) as src:
         dem_arr = src.read(1, masked=True).astype(np.int32).filled(0)
     with rasterio.open(str(gebco_path)) as src:
@@ -314,9 +308,7 @@ def _merge_topography(
         mask_arr = src.read(1, masked=True).filled(0).astype(np.uint8)
 
     surface_map = gebco_arr.copy()
-    is_high_lake = (mask_arr == 1) & (gebco_arr > 0)
-    np.copyto(surface_map, dem_arr, where=is_high_lake)
-    surface_map = np.clip(surface_map, 0, 65535).astype(np.uint16)
+    np.copyto(surface_map, dem_arr, where=mask_arr == 1)
+    surface_map = np.clip(surface_map, 0, 255).astype(np.uint8)
 
-    save_array(surface_map, str(out_dem_path), grid, dtype="uint16", nodata=0)
-    save_array(mask_arr, str(out_mask_path), grid, dtype="uint8", nodata=0)
+    save_array(surface_map, str(out_dem_path), grid, dtype="uint8", nodata=0)

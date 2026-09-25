@@ -7,9 +7,7 @@ namespace EarthMapCreator;
 
 public class HeightMap : DataMap<Rgb48>
 {
-    const int SeaLevel = 92;
-    private const int MaxHeight = 250;
-    const int HeightRange = MaxHeight - SeaLevel;
+    private const double ByteToRgb48 = 257.0;
 
     public HeightMap(string filePath, string landcoverFile) : base(filePath)
     {
@@ -43,9 +41,9 @@ public class HeightMap : DataMap<Rgb48>
 
                         if (isLand)
                         {
-                            float heightFraction = heightPixel.R / 65535.0f;
-                            height = SeaLevel + (int)Math.Round(HeightRange * heightFraction);
-                            height = Math.Max(SeaLevel, height);
+                            // heightmap.png stores absolute world Y in its byte value.
+                            // ImageSharp expands grayscale bytes to Rgb48 by multiplying by 257.
+                            height = Math.Max(1, (int)Math.Round(heightPixel.R / ByteToRgb48));
                         }
 
                         IntValues[x][z].SetInt(i, j, height);

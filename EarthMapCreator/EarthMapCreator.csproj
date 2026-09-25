@@ -1,51 +1,163 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
-
+  <!-- Mod metadata; the ModInfo target renders these values into the build output. -->
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-      <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-    <OutputPath>bin\$(Configuration)\Mods\mod</OutputPath>
-  </PropertyGroup>
-
-  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
-    <DebugType>none</DebugType>
-    <DebugSymbols>false</DebugSymbols>
+    <ModName>EarthMapCreatorO</ModName>
+    <ModType>code</ModType>
+    <ModVersion>0.9.0</ModVersion>
+    <ModId>earthmapcreatoro</ModId>
+    <Description>Generate real-Earth maps for Vintage Story.</Description>
+    <Side>server</Side>
+    <RequiredOnClient>false</RequiredOnClient>
+    <RequiredOnServer>true</RequiredOnServer>
   </PropertyGroup>
 
   <ItemGroup>
+    <ModInfoAuthors Include="tlm920" />
+    <ModInfoAuthors Include="onions" />
+    <Dependencies Include="game" Version="1.22.7" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <Version>$(ModVersion)</Version>
+    <GameDirectory Condition="'$(GameDirectory)' == ''">$(VINTAGE_STORY)</GameDirectory>
+    <DataFolder Condition="'$(DataFolder)' == '' and '$(OS)' == 'Windows_NT'">$(APPDATA)\VintagestoryData</DataFolder>
+    <DataFolder Condition="'$(DataFolder)' == ''">$(HOME)/.config/VintagestoryData</DataFolder>
+    <ModDirectory>$(MSBuildProjectDirectory)/bin/$(Configuration)/Mods</ModDirectory>
+    <OutputPath>bin/$(Configuration)/Mods/earthmapcreatoro/</OutputPath>
+    <PathMap>$(MSBuildProjectDirectory)=/_/EarthMapCreator</PathMap>
+    <Deterministic>true</Deterministic>
+    <EnableSourceLink>false</EnableSourceLink>
+    <EmbedUntrackedSources>false</EmbedUntrackedSources>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+    <!-- Visual Studio's fast up-to-date check must not bypass map staging on F5. -->
+    <DisableFastUpToDateCheck>true</DisableFastUpToDateCheck>
+    <EarthMapPipelineDir>$(MSBuildProjectDirectory)/../Geo/work/build</EarthMapPipelineDir>
+    <EarthMapDebugDataDir>$(MSBuildProjectDirectory)/../Geo/work/debug-data</EarthMapDebugDataDir>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(Configuration)' == 'Debug'">
+    <EarthMapDebugArtifact Include="$(EarthMapPipelineDir)/bathymetry_heightmap.png" />
+    <EarthMapDebugArtifact Include="$(EarthMapPipelineDir)/heightmap.png" />
+    <EarthMapDebugArtifact Include="$(EarthMapPipelineDir)/lake_mask.png" />
+    <EarthMapDebugArtifact Include="$(EarthMapPipelineDir)/lake_depth.png" />
+    <EarthMapDebugArtifact Include="$(EarthMapPipelineDir)/landmask.png" />
+    <EarthMapDebugArtifact Include="$(EarthMapPipelineDir)/climate.png" />
+    <EarthMapDebugArtifact Include="$(EarthMapPipelineDir)/tree.png" />
+    <EarthMapDebugArtifact Include="$(EarthMapPipelineDir)/river.png" />
+    <EarthMapDebugArtifact Include="$(EarthMapPipelineDir)/river_surface.png" />
+    <EarthMapDebugArtifact Include="$(EarthMapPipelineDir)/river_depth.png" />
+  </ItemGroup>
+
+  <Import Project="Properties/localSettings.props" Condition="Exists('Properties/localSettings.props')" />
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>embedded</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="VintagestoryLib">
+      <HintPath>$(GameDirectory)/VintagestoryLib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="VintagestoryAPI">
-      <HintPath>$(VINTAGE_STORY)/VintagestoryAPI.dll</HintPath>
+      <HintPath>$(GameDirectory)/VintagestoryAPI.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="VSSurvivalMod">
-      <HintPath>$(VINTAGE_STORY)/Mods/VSSurvivalMod.dll</HintPath>
+      <HintPath>$(GameDirectory)/Mods/VSSurvivalMod.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="VSEssentials">
+      <HintPath>$(GameDirectory)/Mods/VSEssentials.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="0Harmony">
-      <HintPath>$(VINTAGE_STORY)/Lib/0Harmony.dll</HintPath>
-      <Private>False</Private>
+      <HintPath>$(GameDirectory)/Lib/0Harmony.dll</HintPath>
+      <Private>false</Private>
     </Reference>
-  </ItemGroup>
-
-<ItemGroup>
-  <Content Include="modinfo.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-  </Content>
-</ItemGroup>
-
-<ItemGroup>
-  <Content Include="modicon.png">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-  </Content>
-</ItemGroup>
-
-<ItemGroup>
-  <RuntimeHostConfigurationOption Include="System.Drawing.EnableUnixSupport" Value="true" />
-</ItemGroup>
-
-<ItemGroup>
+    <Content Include="modicon.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="assets/**/*" CopyToOutputDirectory="PreserveNewest" />
+    <RuntimeHostConfigurationOption Include="System.Drawing.EnableUnixSupport" Value="true" />
     <PackageReference Include="OpenTK.Mathematics" Version="4.9.4" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.11" />
-</ItemGroup>
+  </ItemGroup>
 
+  <Target Name="GenerateModInfo" AfterTargets="Build">
+    <PropertyGroup>
+      <GeneratedModInfo>
+{
+  "type": "$(ModType)",
+  "name": "$(ModName)",
+  "modid": "$(ModId)",
+  "version": "$(ModVersion)",
+  "description": "$(Description)",
+  "authors": [ @(ModInfoAuthors->'&quot;%(Identity)&quot;', ', ') ],
+  "dependencies": {
+    @(Dependencies->'&quot;%(Identity)&quot;: &quot;%(Version)&quot;', ', ')
+  },
+  "side": "$(Side)",
+  "requiredOnClient": $(RequiredOnClient),
+  "requiredOnServer": $(RequiredOnServer)
+}
+      </GeneratedModInfo>
+    </PropertyGroup>
+    <MakeDir Directories="$(TargetDir)" />
+    <Message Text="Generating modinfo.json $(ModVersion)" Importance="high" />
+    <WriteLinesToFile File="$(TargetDir)modinfo.json"
+                      Lines="$(GeneratedModInfo)"
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true" />
+    <Exec Condition="'$(OS)' == 'Windows_NT'"
+          Command="powershell -NoProfile -NonInteractive -Command &quot;$ErrorActionPreference = 'Stop'; Get-Content -Raw -LiteralPath '$(TargetDir)modinfo.json' | ConvertFrom-Json | Out-Null&quot;" />
+    <Exec Condition="'$(OS)' != 'Windows_NT'"
+          Command="python3 -m json.tool &quot;$(TargetDir)modinfo.json&quot; &gt; /dev/null" />
+  </Target>
+
+  <Target Name="StageEarthMapForDebug" AfterTargets="GenerateModInfo" Condition="'$(Configuration)' == 'Debug'">
+    <ItemGroup>
+      <EarthMapMissingArtifact Include="@(EarthMapDebugArtifact)" Condition="!Exists('%(Identity)')" />
+    </ItemGroup>
+    <Error Condition="'@(EarthMapMissingArtifact)' != ''"
+           Text="Missing pipeline PNG(s): @(EarthMapMissingArtifact, ', '). Run Geo/launch.py before debugging." />
+    <MakeDir Directories="$(EarthMapDebugDataDir)/EarthMap" />
+    <Copy SourceFiles="@(EarthMapDebugArtifact)"
+          DestinationFolder="$(EarthMapDebugDataDir)/EarthMap/"
+          SkipUnchangedFiles="true" />
+    <WriteLinesToFile File="$(TargetDir)earthmap-debug-path.txt"
+                      Lines="$([System.IO.Path]::GetFullPath('$(EarthMapDebugDataDir)/EarthMap'))"
+                      Overwrite="true" />
+  </Target>
+
+  <Target Name="ValidateJson" BeforeTargets="Build">
+    <ItemGroup>
+      <ModJson Include="assets/**/*.json" />
+    </ItemGroup>
+    <Exec Condition="'$(OS)' == 'Windows_NT'"
+          Command="powershell -NoProfile -NonInteractive -Command &quot;$ErrorActionPreference = 'Stop'; Get-Content -Raw -LiteralPath '%(ModJson.FullPath)' | ConvertFrom-Json | Out-Null&quot;" />
+    <Exec Condition="'$(OS)' != 'Windows_NT'"
+          Command="python3 -m json.tool &quot;%(ModJson.FullPath)&quot; &gt; /dev/null" />
+  </Target>
+
+  <Target Name="PackageMod" AfterTargets="GenerateModInfo" Condition="'$(Configuration)' == 'Release'">
+    <PropertyGroup>
+      <PackageStage>$(IntermediateOutputPath)package/</PackageStage>
+      <ReleaseDirectory>$(MSBuildProjectDirectory)/../Releases</ReleaseDirectory>
+      <ReleaseZip>$(ReleaseDirectory)/earthmapcreatoro_$(ModVersion).zip</ReleaseZip>
+    </PropertyGroup>
+    <RemoveDir Directories="$(PackageStage)" />
+    <ItemGroup>
+      <PackageFile Include="$(TargetDir)**/*" Exclude="$(TargetDir)**/*.pdb" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PackageFile)"
+          DestinationFiles="@(PackageFile->'$(PackageStage)%(RecursiveDir)%(Filename)%(Extension)')" />
+    <MakeDir Directories="$(ReleaseDirectory)" />
+    <Delete Files="$(ReleaseZip)" />
+    <ZipDirectory SourceDirectory="$(PackageStage)" DestinationFile="$(ReleaseZip)" />
+  </Target>
 </Project>

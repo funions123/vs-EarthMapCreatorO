@@ -1,1 +1,1 @@
-dotnet run --project ./CakeBuild/CakeBuild.csproj -- "$@"
+dotnet build EarthMapCreatorO.sln -c Release "$@"

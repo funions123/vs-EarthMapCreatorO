@@ -6,3 +6,4 @@ pyproj>=3.0
 requests
 psutil
 Pillow
+scipy>=1.10

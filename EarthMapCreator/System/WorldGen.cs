@@ -48,14 +48,18 @@ public class EarthWorldGenerator : ModSystem
         IntDataMap2D bathyMap = EarthMapCreator.Layers.OceanBathyMap.IntValues[regionX][regionZ];
         int bathyHere = bathyMap.GetInt(relativeX, relativeZ);
         
-        IntDataMap2D topo = EarthMapCreator.Layers.CompleteTopoMap.IntValues[regionX][regionZ];
-        int topoHere = topo.GetInt(relativeX, relativeZ);
+        IntDataMap2D lakeDepthMap = EarthMapCreator.Layers.LakeDepthMap.IntValues[regionX][regionZ];
+        int lakeDepthHere = lakeDepthMap.GetInt(relativeX, relativeZ);
+        int lakeBedHere = Math.Max(1, terrainHere - lakeDepthHere);
         
         IntDataMap2D landMaskMap = EarthMapCreator.Layers.LandMaskMap.IntValues[regionX][regionZ];
         int landMaskHere = landMaskMap.GetInt(relativeX, relativeZ);
         
         IntDataMap2D lakeMaskMap = EarthMapCreator.Layers.LakeMaskMap.IntValues[regionX][regionZ];
         int lakeMaskHere = lakeMaskMap.GetInt(relativeX, relativeZ);
+        int riverMaskHere = EarthMapCreator.Layers.RiverMap.IntValues[regionX][regionZ].GetInt(relativeX, relativeZ);
+        int riverSurfaceHere = EarthMapCreator.Layers.RiverSurfaceMap.IntValues[regionX][regionZ].GetInt(relativeX, relativeZ);
+        int riverDepthHere = EarthMapCreator.Layers.RiverDepthMap.IntValues[regionX][regionZ].GetInt(relativeX, relativeZ);
         
         int zoneId = EarthMapCreator.Layers.ClimateMap.IntValues[regionX][regionZ].GetInt(relativeX, relativeZ);
         ClimateZone zone = (ClimateZone)zoneId;
@@ -67,9 +71,10 @@ public class EarthWorldGenerator : ModSystem
 
         msg += $"Bathy (Height: {bathyHere})\n";
         msg += $"Land (Height: {terrainHere})\n";
-        msg += $"Topo (Height: {topoHere})\n";
+        msg += $"Lake depth: {lakeDepthHere} (bed height: {lakeBedHere})\n";
         msg += $"Land Mask: {landMaskHere}\n";
         msg += $"Lake Mask: {lakeMaskHere}\n";
+        msg += $"River: {riverMaskHere > 0} (surface: {riverSurfaceHere}, depth: {riverDepthHere})\n";
         
         return TextCommandResult.Success(msg);
     }

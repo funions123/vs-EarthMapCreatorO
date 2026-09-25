@@ -1,27 +1,28 @@
-"""
-pipeline/translate.py — convert intermediate TIFs to final PNGs.
-Replaces translate.sh. Uses rasterio + Pillow for TIF→PNG conversion.
-ImageMagick (magick) is called via subprocess for river post-processing.
-"""
-import subprocess
-import shutil
+"""Convert intermediate rasters and build final-grid lake and river PNGs."""
 from pathlib import Path
 
 import numpy as np
 import rasterio
 from PIL import Image
 
+# Final maps intentionally exceed Pillow's generic decompression-bomb threshold.
+Image.MAX_IMAGE_PIXELS = None
+
 from util.projection import MasterGrid
+from pipeline.lakes import write_lake_maps
+from pipeline.rivers import write_river_maps
 
 
-def run(work_dir: Path, grid: MasterGrid, cfg):
+def run(work_dir: Path, grid: MasterGrid, bounds, cfg):
     """
-    Produces 8 PNGs in work_dir/build/:
-      bathymetry_heightmap.png, complete_topo.png, heightmap.png,
-      lake_mask.png, landmask.png, climate.png, tree.png, river.png
+    Produces 10 aligned PNGs in work_dir/build/:
+      bathymetry_heightmap.png, heightmap.png, lake_mask.png, lake_depth.png,
+      river.png, river_surface.png, river_depth.png, landmask.png, climate.png,
+      tree.png
     """
     build_dir = work_dir / "build"
     build_dir.mkdir(parents=True, exist_ok=True)
+    (build_dir / "complete_topo.png").unlink(missing_ok=True)
 
     out_w = cfg.FINAL_WIDTH if cfg.RESIZE_MAP else None
     out_h = cfg.FINAL_LENGTH if cfg.RESIZE_MAP else None
@@ -33,36 +34,21 @@ def run(work_dir: Path, grid: MasterGrid, cfg):
         out_w, out_h,
     )
 
-    # 2. Complete topography (UInt16 → rescale to Byte)
-    _tif_to_png(
-        work_dir / "complete_topo.tif",
-        build_dir / "complete_topo.png",
-        out_w, out_h,
-        src_range=(0, 65535), dst_range=(0, 255),
-    )
-
-    # 3. Lake surface heightmap (UInt16 → rescale to Byte)
+    # Absolute Vintage Story world Y; lake levels and banks are adjusted after
+    # resampling, on the exact grid consumed by the game.
     _tif_to_png(
         work_dir / "cropped_dem.tif",
         build_dir / "heightmap.png",
         out_w, out_h,
-        src_range=(0, 65535), dst_range=(0, 255),
     )
 
-    # 4. Lake mask (0/1 → 0/255)
-    _tif_to_png(
-        work_dir / "lakes_mask.tif",
-        build_dir / "lake_mask.png",
-        out_w, out_h,
-        src_range=(0, 1), dst_range=(0, 255),
-    )
-
-    # 5. Land mask (Byte, pass-through)
     _tif_to_png(
         work_dir / "land_osm_mask.tif",
         build_dir / "landmask.png",
         out_w, out_h,
+        resample=Image.Resampling.NEAREST,
     )
+    write_lake_maps(work_dir, build_dir, grid)
 
     # 6. Climate / Köppen RGB (3-band Byte)
     koppen_rgb = work_dir / "koppen_climate_rgb.tif"
@@ -71,10 +57,8 @@ def run(work_dir: Path, grid: MasterGrid, cfg):
     # 7. Tree (Byte)
     _tif_to_png(work_dir / "tree.tif", build_dir / "tree.png", out_w, out_h)
 
-    # 8. Rivers (Byte) — then ImageMagick post-process
-    river_png = build_dir / "river.png"
-    _tif_to_png(work_dir / "rivers.tif", river_png, out_w, out_h)
-    _postprocess_rivers(river_png)
+    # OSM rivers operate on the same final grid after lakes establish precedence.
+    write_river_maps(work_dir, build_dir, grid, bounds, cfg)
 
     print("[translate] All PNGs written to", build_dir)
 
@@ -90,6 +74,7 @@ def _tif_to_png(
     src_range=None,
     dst_range=None,
     multiband: bool = False,
+    resample=None,
 ):
     """Read a TIF, optionally rescale, optionally resize, save as PNG."""
     if not src.exists():
@@ -122,66 +107,9 @@ def _tif_to_png(
             img = Image.fromarray(arr, mode="L")
 
     if out_w and out_h:
-        # Use LANCZOS for RGB (climate), BILINEAR for scalar maps (no overshoot)
-        resample = Image.LANCZOS if img.mode == "RGB" else Image.BILINEAR
+        if resample is None:
+            resample = Image.Resampling.LANCZOS if img.mode == "RGB" else Image.Resampling.BILINEAR
         img = img.resize((out_w, out_h), resample)
 
     img.save(str(dst))
 
-
-def _postprocess_rivers(river_png: Path):
-    """
-    Apply ImageMagick post-processing to the river mask PNG.
-    Replicates: magick river.png -background black -alpha remove -alpha off
-                -threshold 90% -blur 0x5 -posterize 10 -level 0%,100%,1.0 river.png
-    """
-    if not river_png.exists():
-        return
-
-    magick = shutil.which("magick") or shutil.which("convert")
-    if not magick:
-        print("  Warning: ImageMagick not found; skipping river post-processing.")
-        _postprocess_rivers_pillow(river_png)
-        return
-
-    cmd = [
-        magick, str(river_png),
-        "-background", "black",
-        "-alpha", "remove",
-        "-alpha", "off",
-        "-threshold", "90%",
-        "-blur", "0x5",
-        "-posterize", "10",
-        "-level", "0%,100%,1.0",
-        str(river_png),
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"  Warning: ImageMagick river post-processing failed: {result.stderr.strip()}")
-        _postprocess_rivers_pillow(river_png)
-
-
-def _postprocess_rivers_pillow(river_png: Path):
-    """
-    Fallback Pillow-based river post-processing when ImageMagick is unavailable.
-    Approximates: threshold 90% → blur → posterize.
-    """
-    from PIL import ImageFilter
-
-    img = Image.open(str(river_png)).convert("L")
-    arr = np.array(img, dtype=np.float32)
-
-    # Threshold at 90%
-    arr = np.where(arr >= 0.9 * 255, 255.0, 0.0)
-
-    # Gaussian blur σ=5
-    img2 = Image.fromarray(arr.astype(np.uint8), mode="L")
-    img2 = img2.filter(ImageFilter.GaussianBlur(radius=5))
-
-    # Posterize to 10 levels
-    arr2 = np.array(img2, dtype=np.float32)
-    levels = 10
-    arr2 = np.round(arr2 / 255.0 * (levels - 1)) / (levels - 1) * 255.0
-
-    img3 = Image.fromarray(arr2.astype(np.uint8), mode="L")
-    img3.save(str(river_png))

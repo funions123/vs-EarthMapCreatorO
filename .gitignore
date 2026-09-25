@@ -1,10 +1,16 @@
 bin/
 .idea/
+.vs/
+*.user
+*.suo
+*.DotSettings.user
+EarthMapCreator/Properties/localSettings.props
 .vscode/
 Releases/
 datasets/
 obj/
-Folder.DotSettings.user
+__pycache__/
+*.pyc
 build/
 venv/
 work/

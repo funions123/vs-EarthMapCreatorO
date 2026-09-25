@@ -45,12 +45,14 @@ public class Terrain : ModSystem
         }
 
         // Get all required maps for this region
-        IntDataMap2D completeTopoMap = layers.CompleteTopoMap.IntValues[regionX][regionZ];
         IntDataMap2D heightMap = layers.HeightMap.IntValues[regionX][regionZ];
+        IntDataMap2D lakeDepthMap = layers.LakeDepthMap.IntValues[regionX][regionZ];
         IntDataMap2D lakeMaskMap = layers.LakeMaskMap.IntValues[regionX][regionZ];
         IntDataMap2D landMaskMap = layers.LandMaskMap.IntValues[regionX][regionZ];
         IntDataMap2D oceanBathyMap = layers.OceanBathyMap.IntValues[regionX][regionZ];
-        IntDataMap2D riverMap = layers.RiverMap.IntValues[regionX][regionZ]; 
+        IntDataMap2D riverMap = layers.RiverMap.IntValues[regionX][regionZ];
+        IntDataMap2D riverSurfaceMap = layers.RiverSurfaceMap.IntValues[regionX][regionZ];
+        IntDataMap2D riverDepthMap = layers.RiverDepthMap.IntValues[regionX][regionZ];
         
         // Get chunk data and config
         IServerChunk[] chunks = request.Chunks;
@@ -65,12 +67,14 @@ public class Terrain : ModSystem
         int seaLevel = 92;
         
         // Cut maps to chunk size
-        int[,] bisectedCompleteTopoMap = CutHeightMapForChunk(completeTopoMap, new Vec2i(chunkX, chunkZ), new Vec2i(regionX, regionZ));
         int[,] bisectedHeightMap = CutHeightMapForChunk(heightMap, new Vec2i(chunkX, chunkZ), new Vec2i(regionX, regionZ));
+        int[,] bisectedLakeDepthMap = CutHeightMapForChunk(lakeDepthMap, new Vec2i(chunkX, chunkZ), new Vec2i(regionX, regionZ));
         int[,] bisectedLakeMaskMap = CutHeightMapForChunk(lakeMaskMap, new Vec2i(chunkX, chunkZ), new Vec2i(regionX, regionZ));
         int[,] bisectedLandMaskMap = CutHeightMapForChunk(landMaskMap, new Vec2i(chunkX, chunkZ), new Vec2i(regionX, regionZ));
         int[,] bisectedOceanBathyMap = CutHeightMapForChunk(oceanBathyMap, new Vec2i(chunkX, chunkZ), new Vec2i(regionX, regionZ));
         int[,] bisectedRiverMap = CutHeightMapForChunk(riverMap, new Vec2i(chunkX, chunkZ), new Vec2i(regionX, regionZ));
+        int[,] bisectedRiverSurfaceMap = CutHeightMapForChunk(riverSurfaceMap, new Vec2i(chunkX, chunkZ), new Vec2i(regionX, regionZ));
+        int[,] bisectedRiverDepthMap = CutHeightMapForChunk(riverDepthMap, new Vec2i(chunkX, chunkZ), new Vec2i(regionX, regionZ));
         
         // --- Determine max Y for loop boundary ---
         var maxY = int.MinValue;
@@ -79,11 +83,12 @@ public class Terrain : ModSystem
             for (int lz = 0; lz < chunkSize; lz++)
             {
                 bool isLand = bisectedLandMaskMap[lx, lz] > 0;
+                bool isLake = bisectedLakeMaskMap[lx, lz] > 0;
                 int surfaceHeight;
 
-                if (!isLand) { // Ocean surface is always sea level
+                if (!isLand && !isLake) { // Ocean surface is always sea level
                     surfaceHeight = seaLevel;
-                } else { // Land or Lake surface is from the heightmap
+                } else { // Land or lake surface is from the heightmap
                     surfaceHeight = bisectedHeightMap[lx, lz];
                 }
                 
@@ -115,51 +120,29 @@ public class Terrain : ModSystem
                 int fluidBlockId = 0; // 0 means no fluid
 
                 // Determine ground, surface, and fluid type for the current column
-                if (!isLand) // Case 1: Ocean
+                if (isLake) // Case 1: Lake (takes precedence over ocean and river)
+                {
+                    surfaceHeight = bisectedHeightMap[lx, lz];
+                    groundHeight = Math.Max(1, surfaceHeight - bisectedLakeDepthMap[lx, lz]);
+                    fluidBlockId = water;
+                }
+                else if (!isLand) // Case 2: Ocean
                 {
                     groundHeight = bisectedOceanBathyMap[lx, lz] - 1;
                     surfaceHeight = seaLevel;
                     fluidBlockId = saltWater;
                 }
-                else if (isRiver && !isLake) // Case 2: River
+                else if (isRiver) // Case 3: River
                 {
-                    // 1. Carve the heightmap down with the river pixels
-                    //    We'll set groundHeight to the new carved riverbed height.
-                    int originalHeight = bisectedHeightMap[lx, lz];
-                    int rawBrightness = bisectedRiverMap[lx, lz];
-                    float normalizedDepth = (float)rawBrightness / 255.0f;
-                    int carveDepth = (int)Math.Round(normalizedDepth * (float)Config.RiverDepth);
-                    if (rawBrightness > 0 && carveDepth == 0)
-                    {
-                        carveDepth = 1;
-                    }
-                    groundHeight = originalHeight - carveDepth;
-
-                    // 2. if the carve causes the riverbed to go below sea level,
-                    //    place water up to sea level to fill the river channel
-                    if (groundHeight < seaLevel)
-                    {
-                        surfaceHeight = seaLevel;
-                        fluidBlockId = water;
-                        // groundHeight remains the carved riverbed height
-                    }
-                    else // Otherwise, the river is a dry channel above sea level
-                    {
-                        surfaceHeight = groundHeight; // Surface is the same as the ground
-                        fluidBlockId = 0; // No water
-                    }
+                    surfaceHeight = bisectedRiverSurfaceMap[lx, lz];
+                    int riverDepth = bisectedRiverDepthMap[lx, lz];
+                    groundHeight = Math.Max(1, surfaceHeight - riverDepth);
+                    fluidBlockId = water;
                 }
-                else if (!isLake) // Case 3: Dry Land
+                else // Case 4: Dry Land
                 {
                     groundHeight = bisectedHeightMap[lx, lz];
                     surfaceHeight = groundHeight;
-                }
-                else // Case 4: Lake
-                {
-                    int topoHeight = bisectedCompleteTopoMap[lx, lz];
-                    groundHeight = (topoHeight > 0) ? topoHeight : bisectedOceanBathyMap[lx, lz];
-                    surfaceHeight = bisectedHeightMap[lx, lz];
-                    fluidBlockId = water;
                 }
 
                 // Set the engine's heightmaps

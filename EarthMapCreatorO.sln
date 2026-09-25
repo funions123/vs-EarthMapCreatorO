@@ -1,0 +1,53 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EarthMapCreator", "EarthMapCreator\EarthMapCreator.csproj", "{2407E3DE-594C-4BCB-87F8-CAC400FEFAC0}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Geo", "Geo", "{6D11463C-F544-4C85-AB7D-9213073D451A}"
+	ProjectSection(SolutionItems) = preProject
+		Geo\config.py = Geo\config.py
+		Geo\launch.py = Geo\launch.py
+		Geo\pipeline\__init__.py = Geo\pipeline\__init__.py
+		Geo\pipeline\climate.py = Geo\pipeline\climate.py
+		Geo\pipeline\koppen.py = Geo\pipeline\koppen.py
+		Geo\pipeline\land.py = Geo\pipeline\land.py
+        Geo\pipeline\lakes.py = Geo\pipeline\lakes.py
+        Geo\pipeline\rivers.py = Geo\pipeline\rivers.py
+		Geo\pipeline\topography.py = Geo\pipeline\topography.py
+		Geo\pipeline\translate.py = Geo\pipeline\translate.py
+		Geo\pipeline\tree.py = Geo\pipeline\tree.py
+		Geo\requirements.txt = Geo\requirements.txt
+		Geo\util\__init__.py = Geo\util\__init__.py
+		Geo\util\projection.py = Geo\util\projection.py
+		Geo\util\raster.py = Geo\util\raster.py
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
+		Release|Any CPU = Release|Any CPU
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{2407E3DE-594C-4BCB-87F8-CAC400FEFAC0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2407E3DE-594C-4BCB-87F8-CAC400FEFAC0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2407E3DE-594C-4BCB-87F8-CAC400FEFAC0}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{2407E3DE-594C-4BCB-87F8-CAC400FEFAC0}.Debug|x64.Build.0 = Debug|Any CPU
+		{2407E3DE-594C-4BCB-87F8-CAC400FEFAC0}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{2407E3DE-594C-4BCB-87F8-CAC400FEFAC0}.Debug|x86.Build.0 = Debug|Any CPU
+		{2407E3DE-594C-4BCB-87F8-CAC400FEFAC0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2407E3DE-594C-4BCB-87F8-CAC400FEFAC0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2407E3DE-594C-4BCB-87F8-CAC400FEFAC0}.Release|x64.ActiveCfg = Release|Any CPU
+		{2407E3DE-594C-4BCB-87F8-CAC400FEFAC0}.Release|x64.Build.0 = Release|Any CPU
+		{2407E3DE-594C-4BCB-87F8-CAC400FEFAC0}.Release|x86.ActiveCfg = Release|Any CPU
+		{2407E3DE-594C-4BCB-87F8-CAC400FEFAC0}.Release|x86.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

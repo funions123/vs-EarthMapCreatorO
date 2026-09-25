@@ -1,6 +1,6 @@
-vs-earth-map-creator-O
+EarthMapCreatorO
 ============================
-Make cool earth maps in Vintage Story (VS)
+Generate real-Earth maps for Vintage Story.
 
 Original code by tlm9201. Heavily modified and improved, and the bash script image processing pipeline was rewritten in python for windows+linux compat and ease of use.
 Not a fork because its functionally impossible to pull from upstream (due to the extent of rewrite) and the merge conflicts got annoying.
@@ -9,17 +9,37 @@ https://github.com/tlm9201/vs-earth-map-creator
 
 Requirements
 -------------------
-dotnet 8
-vintage story
-python3 (+ pip packages, see Geo/requirements.txt)
-ImageMagick (optional, for river post-processing — falls back to Pillow if absent)
+- Visual Studio 2022 with .NET 10 SDK (or `dotnet` CLI)
+- Vintage Story 1.22.7 or a compatible .NET 10 game installation
+- Python 3 and packages in Geo/requirements.txt for map generation
+- ImageMagick (optional; river post-processing falls back to Pillow)
+
+Visual Studio build
+-------------------
+Open EarthMapCreatorO.sln and build the EarthMapCreator project. Set VINTAGE_STORY
+to the game installation directory, or copy
+EarthMapCreator/Properties/localSettings.props.example to localSettings.props and
+set GameDirectory and DataFolder there. That local file is not committed.
+Debug builds appear under EarthMapCreator/bin/Debug/Mods/earthmapcreatoro/.
+Release builds create `Releases/earthmapcreatoro_<version>.zip`. Mod metadata is
+generated into the build output from the properties at the top of
+`EarthMapCreator.csproj`; update `<ModVersion>` there to bump the version.
+The Client and Server profiles use the normal Vintage Story data folder, preserving
+credentials, saves, and mod configuration. Run the Geo pipeline first; each Debug
+build stages its eight PNGs from `Geo/work/build/` into
+`Geo/work/debug-data/EarthMap/` and embeds that absolute map path in the Debug
+mod. Release builds use the normal Vintage Story `EarthMap` folder.
+
+Release builds embed path-mapped symbols for useful crash-log line numbers.
+Paths to this repository are replaced with /_/EarthMapCreator; SourceLink is
+disabled, and standalone PDBs are excluded from the ZIP. Check compiled release
+artifacts for machine paths before sharing them.
 
 Directories
 -------------------
 .
-├── CakeBuild         - build
-├── EarthMapCreator   - vs code mod
-└── Geo               - geospatial processing scripts
+├── EarthMapCreator   - Visual Studio mod project
+└── Geo               - independent geospatial processing scripts
 
 Python Pipeline (Geo/)
 -------------------
@@ -32,8 +52,6 @@ placed manually in Geo/datasets/ before running:
   gebco_2025_sub_ice_topo.zip  GEBCO bathymetry (or extract the .nc and place it directly)
                             https://www.gebco.net/data_and_products/gridded_bathymetry_data/
 
-  ne_10m_rivers_lake_centerlines.zip  Natural Earth rivers
-                            https://www.naturalearthdata.com/downloads/10m-physical-vectors/
 
   ne_10m_lakes.zip          Natural Earth lakes
                             https://www.naturalearthdata.com/downloads/10m-physical-vectors/
@@ -41,8 +59,9 @@ placed manually in Geo/datasets/ before running:
   gm_ve_v1.zip              Global vegetation canopy cover
                             https://www.earthenv.org/vegetation
 
-The following are downloaded automatically on first run:
+The following are downloaded automatically on first run and cached:
   - OSM land polygons
+  - OSM river ways and mapped riverbank polygons from Overpass
   - Köppen-Geiger climate classification
 
 Once datasets are in place:
@@ -62,6 +81,35 @@ Once datasets are in place:
        python launch.py
 
   4. Output PNGs will be written to Geo/work/build/.
+
+Lake shorelines are computed on the final output grid. The pipeline rasterizes
+each connected lake to one waterline, derives a 1-12 block tapered depth, and
+grades the surrounding bank over six blocks. `lake_mask.png` is binary;
+`lake_depth.png` stores depth in blocks. `heightmap.png`, `landmask.png`, and
+both lake files share one final-grid footprint. `complete_topo.png` is obsolete.
+
+Rivers use cached OSM `waterway=river` centerlines and mapped river polygons.
+Line-only rivers are buffered in projected metres (45 m by default), then
+rasterized directly on the final block grid. `river.png` is binary,
+`river_surface.png` stores local absolute water Y, and `river_depth.png` stores
+1-3 block depths. River water never fills to global sea level; banks are graded
+over three blocks. Tune these values in `Geo/config.py`.
+
+The current `Geo/config.py` preset targets a square Southern Levant test map:
+30-33 N, 33-36 E in UTM zone 36N. Terrain pixels now store absolute Vintage
+Story Y rather than a sea-level-relative fraction. With the configured 10 metres
+per block, zero metres is Y=92 and the Dead Sea surface near -430 m is Y=49.
+This format is incompatible with older generated `heightmap.png` files; rerun
+the pipeline before debugging or installing this version.
+
+Visual Studio debugging
+-------------------
+After running `python launch.py`, select `Client` or `Server` and press F5.
+The Debug build fails if any required pipeline PNG is absent. The game retains
+its normal AppData profile, credentials, saves, and `ModConfig`; only Earth map
+PNGs are loaded directly from `Geo/work/debug-data/EarthMap/`. Ensure the normal
+`ModConfig/EarthMapCreator.json` dimensions match `FINAL_WIDTH` and
+`FINAL_LENGTH`.
 
 Usage (in Vintage Story)
 -------------------
@@ -90,7 +138,7 @@ Limitations
 TODO
 -------------------
 - Improve rivers.
-- Large inland lakes look terrible right now.
+- Lake quality remains limited by Natural Earth polygon and DEM coverage.
 - Vanilla structures like spawning inside rivers and under oceans, although this is apparently a vanilla bug.
 
 Data Used/Acknowledgments

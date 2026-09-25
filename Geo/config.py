@@ -1,23 +1,12 @@
 # config.py — edit this before each run
 
 # --- Bounding Box (EPSG:4326) ---
-# Ionian Sea
-LAT_MIN = 33.1
-LAT_MAX = 44.2
-LON_MIN = 19.0
-LON_MAX = 32.0
-
-# Eastern Mediterranean
-# LAT_MIN = 25.0; LAT_MAX = 50.0; LON_MIN = 5.0; LON_MAX = 40.0
-
-# Great Lakes
-# LAT_MIN = 35.013755; LAT_MAX = 50.627996; LON_MIN = -90.084961; LON_MAX = -75.350586
-
-# Ireland
-# LAT_MIN = 51.013755; LAT_MAX = 55.627996; LON_MIN = -12.084961; LON_MAX = -4.350586
-
-# Full planet
-# LAT_MIN = -84.0; LAT_MAX = 84.0; LON_MIN = -179.0; LON_MAX = 179.0
+# Southern Levant: square 3 by 3 degree test extent in UTM 36N.
+# Covers the requested 30-33 N, 34-35 E area and includes the full Dead Sea.
+LAT_MIN = 30.0
+LAT_MAX = 33.0
+LON_MIN = 33.0
+LON_MAX = 36.0
 
 # --- Output Resolution ---
 FINAL_WIDTH = 10240    # final PNG width in pixels (must be multiple of 512)
@@ -27,10 +16,17 @@ FINAL_RES = 300        # internal raster pixel size in metres
 # --- Projection ---
 # Set to None to auto-select UTM (for regions < 13° wide) or EPSG:3857 (wider).
 # Set to a CRS string (e.g. "EPSG:32633", "ESRI:54080") to override.
-FORCE_FINAL_PROJ = "ESRI:54080"
+FORCE_FINAL_PROJ = "EPSG:32636"
 
 # --- Resize final PNGs to FINAL_WIDTH x FINAL_LENGTH ---
 RESIZE_MAP = True
+
+# --- Terrain Elevation Encoding ---
+# World Y assigned to zero metres elevation and metres represented per block.
+# Negative elevations remain below TERRAIN_SEA_LEVEL_Y instead of being clipped.
+TERRAIN_SEA_LEVEL_Y = 92
+TERRAIN_METRES_PER_BLOCK = 10.0
+TERRAIN_MAX_Y = 250
 
 # --- Bathymetry Scaling ---
 ENABLE_BATHY_CUSTOM_SCALE = True
@@ -50,9 +46,16 @@ BATHY_EXAGGERATE_THRESHOLD = -100
 # Output byte value at the threshold (must be between MAXDEPTH and SEALEVEL)
 BATHY_EXAGGERATE_MIDPOINT = 80
 
-# --- Rivers ---
-# Half-width of rendered rivers in blocks at sea level
-MAJOR_RIVER_WIDTH = 7
+# --- OSM Rivers ---
+# Line-only waterways are buffered in projected metres; mapped polygons retain
+# their actual banks. At ~30 m/block, 45 m generally renders as 2-3 blocks.
+RIVER_DEFAULT_WIDTH_METRES = 45.0
+RIVER_MAX_LINE_WIDTH_METRES = 250.0
+RIVER_SURFACE_WINDOW_BLOCKS = 5
+RIVER_MIN_DEPTH_BLOCKS = 1
+RIVER_MAX_DEPTH_BLOCKS = 3
+RIVER_BANK_WIDTH_BLOCKS = 3
+RIVER_BANK_SLOPE = 1
 
 # --- Dataset caching ---
 # Cache downloaded datasets in Geo/datasets/ for reuse across runs

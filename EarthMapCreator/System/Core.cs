@@ -1,4 +1,6 @@
-﻿using System;
+﻿﻿using System;
+using System.IO;
+using System.Reflection;
 using HarmonyLib;
 using Vintagestory.API.Common;
 using Vintagestory.API.Server;
@@ -38,9 +40,29 @@ public class EarthMapCreator : ModSystem
         }
     }
 
-    private void LoadMapLayers(ICoreAPI api) {
-        var folder = api.GetOrCreateDataPath("EarthMap");
-        Mod.Logger.Notification(folder);
+    private void LoadMapLayers(ICoreAPI api)
+    {
+        string folder = ResolveMapDirectory(api);
+        Mod.Logger.Notification("Loading Earth map layers from {0}", folder);
         Layers = new MapLayers(folder);
+    }
+
+    internal static string ResolveMapDirectory(ICoreAPI api)
+    {
+        string assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!;
+        string debugPathFile = Path.Combine(assemblyDirectory, "earthmap-debug-path.txt");
+
+        if (!File.Exists(debugPathFile))
+        {
+            return api.GetOrCreateDataPath("EarthMap");
+        }
+
+        string folder = File.ReadAllText(debugPathFile).Trim();
+        if (!Directory.Exists(folder))
+        {
+            throw new DirectoryNotFoundException($"Staged Earth map directory does not exist: {folder}");
+        }
+
+        return folder;
     }
 }

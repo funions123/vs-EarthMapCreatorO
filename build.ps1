@@ -1,2 +1,2 @@
-dotnet run --project CakeBuild/CakeBuild.csproj -- $args
-exit $LASTEXITCODE;
+dotnet build EarthMapCreatorO.sln -c Release @args
+exit $LASTEXITCODE
