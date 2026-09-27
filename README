@@ -25,10 +25,10 @@ Release builds create `Releases/earthmapcreatoro_<version>.zip`. Mod metadata is
 generated into the build output from the properties at the top of
 `EarthMapCreator.csproj`; update `<ModVersion>` there to bump the version.
 The Client and Server profiles use the normal Vintage Story data folder, preserving
-credentials, saves, and mod configuration. Run the Geo pipeline first; each Debug
-build stages its eight PNGs from `Geo/work/build/` into
-`Geo/work/debug-data/EarthMap/` and embeds that absolute map path in the Debug
-mod. Release builds use the normal Vintage Story `EarthMap` folder.
+credentials, saves, and mod configuration. Run the Geo pipeline first; Debug
+builds read `earthmap.regions` directly from `Geo/work/build/` without copying
+the multi-gigabyte artifact. Release builds use the normal Vintage Story
+`EarthMap` folder.
 
 Release builds embed path-mapped symbols for useful crash-log line numbers.
 Paths to this repository are replaced with /_/EarthMapCreator; SourceLink is
@@ -59,10 +59,17 @@ placed manually in Geo/datasets/ before running:
   gm_ve_v1.zip              Global vegetation canopy cover
                             https://www.earthenv.org/vegetation
 
+  HydroRIVERS_v10_na_shp/  Extract the North/Central America HydroRIVERS
+                            shapefile here, including .shp, .shx, .dbf, .prj:
+                            https://www.hydrosheds.org/products/hydrorivers
+
 The following are downloaded automatically on first run and cached:
   - OSM land polygons
-  - OSM river ways and mapped riverbank polygons from Overpass
-  - Köppen-Geiger climate classification
+  - Beck et al. (2023) Köppen-Geiger 1901–1930 classification, corrected 2026
+    archive (`koppen_geiger_tif.zip`, ~1 km / 0.00833333° grid).
+    The pipeline uses that period and resolution explicitly; a cached
+    `koppen_geiger_0p1.tif` is not selected. Climate categories are resampled
+    with nearest neighbor so their colors survive the region-store lookup.
 
 Once datasets are in place:
 
@@ -80,59 +87,156 @@ Once datasets are in place:
   3. Run the pipeline:
        python launch.py
 
-  4. Output PNGs will be written to Geo/work/build/.
+  4. PNGs for inspection and `earthmap.regions` for the mod are written to Geo/work/build/.
 
-Lake shorelines are computed on the final output grid. The pipeline rasterizes
-each connected lake to one waterline, derives a 1-12 block tapered depth, and
-grades the surrounding bank over six blocks. `lake_mask.png` is binary;
-`lake_depth.png` stores depth in blocks. `heightmap.png`, `landmask.png`, and
-both lake files share one final-grid footprint. `complete_topo.png` is obsolete.
+Rebuilding the climate also changes `earthmap.regions`. Stop any game/server
+using the existing region file before running the pipeline so Windows can
+replace it. A new map takes effect for newly generated chunks; regenerate
+existing chunks to update their climate-derived terrain and vegetation.
 
-Rivers use cached OSM `waterway=river` centerlines and mapped river polygons.
-Line-only rivers are buffered in projected metres (45 m by default), then
-rasterized directly on the final block grid. `river.png` is binary,
-`river_surface.png` stores local absolute water Y, and `river_depth.png` stores
-1-3 block depths. River water never fills to global sea level; banks are graded
-over three blocks. Tune these values in `Geo/config.py`.
+Natural Earth polygons classified as `Lake` or `Alkaline Lake` are retained;
+`Reservoir` polygons are excluded before topography and final-grid lake
+rasterization. Lake shorelines are computed on the final output grid. The
+pipeline rasterizes each connected lake to one waterline, derives a 1-12 block
+tapered depth, and grades the surrounding bank over six blocks.
+`lake_mask.png` and the region-store lake plane encode 0 = no lake,
+255 = freshwater (`Lake`), and 128 = saltwater (`Alkaline Lake`, including
+the Salton Sea and Great Salt Lake). For salt lakes classified only as `Lake`,
+add their exact Natural Earth `name` values to `SALINE_LAKE_NAMES` in
+`Geo/config.py` (for example, `["<Natural Earth lake name>"]`, replacing the
+placeholder with the actual name). The empty default keeps unlisted lakes
+freshwater; the list changes water type but does not add missing polygons.
+Matching names apply to every polygon with that name. A connected lake
+containing both types uses saltwater throughout. The game uses saltwater
+blocks for value 128; all other lake values remain freshwater. `lake_depth.png`
+stores depth in blocks. `heightmap.png`, `landmask.png`, and both lake files
+share one final-grid footprint. `complete_topo.png` is obsolete. Rerun the pipeline after
+changing lake selection; previously generated maps retain their old polygons
+and lake types.
 
-The current `Geo/config.py` preset targets a square Southern Levant test map:
-30-33 N, 33-36 E in UTM zone 36N. Terrain pixels now store absolute Vintage
-Story Y rather than a sea-level-relative fraction. With the configured 10 metres
-per block, zero metres is Y=92 and the Dead Sea surface near -430 m is Y=49.
-This format is incompatible with older generated `heightmap.png` files; rerun
-the pipeline before debugging or installing this version.
+Final-grid coastal correction follows lake rasterization and precedes river
+fitting. Ocean pixels with missing or invalidly low encoded bathymetry (below
+`BATHY_SCALE_MAXDEPTH`) are replaced with one-block-deep ocean: a bed at
+sea level minus one and water at sea level. Dry land below sea level within
+16 blocks of existing ocean is converted to the same shallow ocean by
+clearing its land mask. Valid neighboring depths are not smoothed. Lake
+surfaces and inland below-sea-level basins are left alone. Rebuild PNGs and
+`earthmap.regions` to apply this correction; existing game chunks must also
+be regenerated.
+
+Rivers use the local HydroRIVERS North/Central America centerline dataset.
+`RIVER_MIN_UPSTREAM_AREA_SQKM` in `Geo/config.py` selects reaches by upstream
+drainage area (`UPLAND_SKM`); the default is 1,000 km² at 25,600 blocks per
+axis. With `RIVER_AUTO_SCALE_UPSTREAM_AREA = True` (the default), the effective
+threshold is multiplied by `max(1, 25600 / min(output width, output height))`.
+A 12,800 × 12,800 map of the same region therefore uses 2,000 km²; a
+10,240 × 10,240 map uses 2,500 km². Non-square maps use their shorter axis;
+larger maps do not lower the configured threshold. Set the option to `False`
+to hold the threshold fixed regardless of output dimensions.
+The default full-size threshold selects roughly 30,000 reaches before the
+mean-flow cutoff. `RIVER_MIN_FLOW_CMS` then excludes reaches whose long-term
+mean discharge (`DIS_AV_CMS`) is below 1 m³/s, including the mapped zero-flow
+channel through Badwater Basin. This removes many dry channels, but annual
+mean flow does not identify seasonal rivers; some intermittent reaches can
+remain and some small perennial reaches can be excluded. Tune both thresholds
+in `Geo/config.py`. Selected reaches are clipped to the map extent and
+simplified at half a final pixel before rasterization and
+waterline fitting. Channel width uses a square-root curve: at
+`RIVER_WIDTH_REFERENCE_FLOW_CMS`, it gains one output block over the
+`RIVER_MIN_WIDTH_PIXELS` minimum (default 2), capped by
+`RIVER_MAX_WIDTH_PIXELS` (default 8). Cells are selected by their centers so
+touching edges do not add a ninth column at the cap. These settings control
+visual width, not a measured hydraulic width. HydroRIVERS has no mapped
+riverbank polygons. Terminal reaches with at least 10,000 km² upstream area
+can cross up to 30 km of continuous sea-level land to the nearest ocean cell.
+This approximates pre-diversion flow in dry deltas (including the Colorado),
+not a historically surveyed channel: a ridge or lake blocks the connection.
+Tune `RIVER_COASTAL_CONNECTION_*` in `Geo/config.py` to change those limits.
+Other centerlines drain toward lakes, coasts, or map edges.
+An isotonic fit joins tributaries to shared levels. The HydroRIVERS
+source-to-`NEXT_DOWN` order is retained through final raster fitting, so
+downstream water never climbs a mapped reach even where the DEM rises.
+River water is limited to adjacent dry-bank height; narrow high-water
+crests and isolated low-water pockets at bends are carved across the
+channel without raising banks or water. Every water column assigned to a
+centerline sample shares its lowest cross-section level, while distinct
+downstream samples retain discrete drops. Banks touching multiple water
+levels grade from the highest adjacent column; natural low banks are never
+raised.
+Quantization permits flat stretches where the real gradient is below
+one block. `river.png` is binary; `river_surface.png` stores absolute
+water Y and `river_depth.png` stores 1–3 block depths. Rebuild all maps after
+changing projection, bounds, scale, or river selection/width/depth settings in
+`Geo/config.py`.
+The pipeline reads an extracted dataset from `Geo/datasets/`, or from
+`~/Downloads/HydroRIVERS_v10_na_shp/` if it is already extracted there.
+Only the final `=== Pipeline complete ===` message means all maps rebuilt.
+The Salton Sea is an `Alkaline Lake` in Natural Earth; it is retained at
+water Y=89 in the current preset. Updating PNGs or `earthmap.regions` does
+not change already generated game chunks. Restart the server with the new
+region file and generate new terrain (or regenerate affected chunks) to
+see a changed lake or river in an existing world.
+
+
+The current `Geo/config.py` preset covers 30.59–49.00 N, 120.00–94.04 W
+in Web Mercator, with a 25,600 × 25,600 block output (Vintage Story's
+"25k blocks" preset). Terrain pixels store absolute Vintage Story Y:
+zero metres is `TERRAIN_SEA_LEVEL_Y` (92 by default), and the highest valid
+elevation on the final output grid maps to Y=255. All other elevations use
+the same linear metres-to-block scale, including terrain below sea level.
+Ocean depth remains independently scaled. Rebuild the PNGs and
+`earthmap.regions` before debugging or installing this version.
 
 Visual Studio debugging
 -------------------
 After running `python launch.py`, select `Client` or `Server` and press F5.
-The Debug build fails if any required pipeline PNG is absent. The game retains
-its normal AppData profile, credentials, saves, and `ModConfig`; only Earth map
-PNGs are loaded directly from `Geo/work/debug-data/EarthMap/`. Ensure the normal
-`ModConfig/EarthMapCreator.json` dimensions match `FINAL_WIDTH` and
-`FINAL_LENGTH`.
+The Debug build fails if `earthmap.regions` is absent. The game retains
+its normal AppData profile, credentials, saves, and `ModConfig`; the map
+artifact is loaded directly from `Geo/work/build/`. Map dimensions are read
+from the artifact header; no mod configuration dimensions are required.
+
+Advanced Geology server test
+-------------------
+Set `VINTAGE_STORY` to the game installation directory, build the map with
+`python Geo/launch.py`, then run:
+
+    python ServerTests/run_ag_ores.py --ag-mod path/to/advancedgeology.zip
+
+This opt-in test builds both the mod and a test-only server probe, launches an
+isolated fresh world with AG, and searches a 32×32-chunk area near map center
+for non-granite rock and a non-gem metal ore block after world generation.
+It reports the found ore block code; failure or timeout returns a nonzero exit
+status. The world and temporary probe mod are removed afterward. It does not
+modify your normal Vintage Story saves or prove that every AG deposit type
+generates.
 
 Usage (in Vintage Story)
 -------------------
-1. Copy all PNGs from Geo/work/build/ into your VS data directory:
+1. Copy `Geo/work/build/earthmap.regions` into your VS data directory:
      Linux:   ~/.config/VintagestoryData/EarthMap/
      Windows: %APPDATA%\VintagestoryData\EarthMap\
 
-2. Set MapWidthBlocks and MapHeightBlocks in:
-     ModConfig/EarthMapCreator.json
-   to match the FINAL_WIDTH and FINAL_LENGTH you used in config.py.
-
-3. Install the mod, create a new world (ideally with the same dimensions as your generated map images), and the mod should begin generating chunks based on the earth map data.
+2. Install the mod and create a world with the same dimensions as the generated
+   map. The mod reads map dimensions from `earthmap.regions` and loads regions
+   as needed.
 
    The map is placed so that chunk 0,0 (top-left of the world) aligns with
    the top-left of your PNG images. Map size must be a multiple of 512 blocks.
    If you create a world that is larger than the generated images, you may spawn in the void since the entire area outside the valid image data zone is simply not generated.
    Vintage story spawns you in the center of the total map dimensions and maps in-game coordinates to that center.
 
+Earth terrain is filled before Vintage Story's rock-strata pass, so the game's
+procedural rock layers can replace the base granite. Ore generation runs in
+the later terrain-features pass. Changing this mod's worldgen order affects
+only newly generated chunks; regenerate existing chunks to replace their
+old all-granite terrain and rerun deposit generation.
+
 Limitations
 -------------------
 - Map generation must be a multiple of 512 blocks.
 - Maximum 256 height.
-- Much more data could be applied to VS (rock strata, ores, hot springs, etc.)
+- Rock types and ore locations use game/mod procedural generation; the Earth
+  data does not contain real-world lithology or mineral-deposit locations.
 - Vintage Story map resolutions/padding are hardcoded on the client.
 
 TODO

@@ -1,9 +1,6 @@
 namespace EarthMapCreator;
 
 public class Config {
-    public int MapWidthBlocks = 10240;
-    public int MapHeightBlocks = 10240;
-    
     // gen modding
     public byte PrecipitationAdd = 0;
     public byte TemperatureAdd = 0;

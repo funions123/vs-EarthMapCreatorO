@@ -3,14 +3,17 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
+from rasterio.enums import Resampling
 from PIL import Image
 
 # Final maps intentionally exceed Pillow's generic decompression-bomb threshold.
 Image.MAX_IMAGE_PIXELS = None
 
 from util.projection import MasterGrid
+from pipeline.coast import write_coastal_maps
 from pipeline.lakes import write_lake_maps
 from pipeline.rivers import write_river_maps
+from pipeline.topography import _encode_terrain_y
 
 
 def run(work_dir: Path, grid: MasterGrid, bounds, cfg):
@@ -34,13 +37,8 @@ def run(work_dir: Path, grid: MasterGrid, bounds, cfg):
         out_w, out_h,
     )
 
-    # Absolute Vintage Story world Y; lake levels and banks are adjusted after
-    # resampling, on the exact grid consumed by the game.
-    _tif_to_png(
-        work_dir / "cropped_dem.tif",
-        build_dir / "heightmap.png",
-        out_w, out_h,
-    )
+    _write_heightmap(work_dir / "cropped_dem.tif", build_dir / "heightmap.png",
+                     out_w, out_h, cfg)
 
     _tif_to_png(
         work_dir / "land_osm_mask.tif",
@@ -48,16 +46,18 @@ def run(work_dir: Path, grid: MasterGrid, bounds, cfg):
         out_w, out_h,
         resample=Image.Resampling.NEAREST,
     )
-    write_lake_maps(work_dir, build_dir, grid)
+    write_lake_maps(work_dir, build_dir, grid, cfg)
+    write_coastal_maps(build_dir, cfg)
 
     # 6. Climate / Köppen RGB (3-band Byte)
     koppen_rgb = work_dir / "koppen_climate_rgb.tif"
-    _tif_to_png(koppen_rgb, build_dir / "climate.png", out_w, out_h, multiband=True)
+    _tif_to_png(koppen_rgb, build_dir / "climate.png", out_w, out_h,
+                multiband=True, resample=Image.Resampling.NEAREST)
 
     # 7. Tree (Byte)
     _tif_to_png(work_dir / "tree.tif", build_dir / "tree.png", out_w, out_h)
 
-    # OSM rivers operate on the same final grid after lakes establish precedence.
+    # Local HydroRIVERS lines operate on the final grid after lakes establish precedence.
     write_river_maps(work_dir, build_dir, grid, bounds, cfg)
 
     print("[translate] All PNGs written to", build_dir)
@@ -66,6 +66,38 @@ def run(work_dir: Path, grid: MasterGrid, bounds, cfg):
 # ------------------------------------------------------------------ #
 # Helpers
 # ------------------------------------------------------------------ #
+
+def _write_heightmap(src: Path, dst: Path, out_w, out_h, cfg):
+    """Fit the final-grid peak to Y=255 without holding the world in memory."""
+    with rasterio.open(src) as dem:
+        width = out_w or dem.width
+        height = out_h or dem.height
+        def rows(y, count):
+            window = rasterio.windows.Window(0, y * dem.height / height,
+                                               dem.width, count * dem.height / height)
+            return dem.read(1, window=window, out_shape=(count, width),
+                            resampling=Resampling.bilinear, masked=True).filled(-32768)
+
+        peak = 0
+        has_data = False
+        for y in range(0, height, 512):
+            band = rows(y, min(512, height - y))
+            valid = band[band > -32768]
+            if valid.size:
+                has_data = True
+                peak = max(peak, int(valid.max()))
+        if not has_data:
+            raise ValueError("No valid elevations on final output grid")
+
+        # Pillow's mapped image is written bandwise; each source read is bounded.
+        image = Image.new("L", (width, height))
+        for y in range(0, height, 512):
+            count = min(512, height - y)
+            band = _encode_terrain_y(rows(y, count), cfg, peak)
+            image.paste(Image.fromarray(band), (0, y))
+        image.save(dst)
+    print(f"[topo] Peak elevation {peak} m -> Y={255 if peak > 0 else int(cfg.TERRAIN_SEA_LEVEL_Y)}")
+
 
 def _tif_to_png(
     src: Path,

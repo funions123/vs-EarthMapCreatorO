@@ -1,5 +1,4 @@
 using System;
-using SixLabors.ImageSharp.PixelFormats;
 using Vintagestory.API.Common;
 using Vintagestory.API.Datastructures;
 using Vintagestory.API.Server;
@@ -8,21 +7,12 @@ namespace EarthMapCreator;
 
 public class Climate : ModSystem
 {
-    private const int RegionSize = 512;
 
     public static System.Func<int, int, int, int> ClimatePostProcess = (val, blockX, blockZ) =>
     {
-        int regionX = (blockX >= 0 ? blockX / RegionSize : (blockX - RegionSize + 1) / RegionSize);
-        int regionZ = (blockZ >= 0 ? blockZ / RegionSize : (blockZ - RegionSize + 1) / RegionSize);
-        int relativeX = blockX % RegionSize;
-        if (relativeX < 0) relativeX += RegionSize;
-        int relativeZ = blockZ % RegionSize;
-        if (relativeZ < 0) relativeZ += RegionSize;
-        
         // Failsafe check for coordinates outside the map bounds.
         // This check will now correctly catch negative regions.
-        if (regionX < 0 || regionX >= EarthMapCreator.Layers.ClimateMap.IntValues.Length ||
-            regionZ < 0 || regionZ >= EarthMapCreator.Layers.ClimateMap.IntValues[0].Length)
+        if (!EarthMapCreator.Layers.Contains(blockX, blockZ))
         {
             // Outside map, return a default climate (e.g., Temperate)
             (float temp, float rainRel) fallback = ClimateMatcher.GetClimateValues(ClimateZone.Mediterranean);
@@ -31,13 +21,13 @@ public class Climate : ModSystem
         }
         
         // 1. Get the pre-processed Zone ID from your map
-        int zoneId = EarthMapCreator.Layers.ClimateMap.IntValues[regionX][regionZ].GetInt(relativeX, relativeZ);
+        int zoneId = val;
         ClimateZone zone = (ClimateZone)zoneId;
 
         // 2. Convert that Zone ID back into representative Temp/Rain values
         (float temp, float rainRel) climate = ClimateMatcher.GetClimateValues(zone);
 
-        if (EarthMapCreator.Layers.RiverMap.IntValues[regionX][regionZ].GetInt(relativeX, relativeZ) != 0)
+        if (EarthMapCreator.Layers.Get(MapPlane.River, blockX, blockZ) != 0)
         {
             climate.rainRel = 0.9f;
         }
@@ -83,23 +73,15 @@ public class Climate : ModSystem
     
     public static System.Func<int, int, int, int> ForestPostProcess = (val, blockX, blockZ) =>
     {
-        int regionX = (blockX >= 0 ? blockX / RegionSize : (blockX - RegionSize + 1) / RegionSize);
-        int regionZ = (blockZ >= 0 ? blockZ / RegionSize : (blockZ - RegionSize + 1) / RegionSize);
-        int relativeX = blockX % RegionSize;
-        if (relativeX < 0) relativeX += RegionSize;
-        int relativeZ = blockZ % RegionSize;
-        if (relativeZ < 0) relativeZ += RegionSize;
-        
         // Failsafe check for coordinates outside the map bounds.
         // This check will now correctly catch negative regions.
-        if (regionX < 0 || regionX >= EarthMapCreator.Layers.LandMaskMap.IntValues.Length ||
-            regionZ < 0 || regionZ >= EarthMapCreator.Layers.LandMaskMap.IntValues[0].Length)
+        if (!EarthMapCreator.Layers.Contains(blockX, blockZ))
         {
             return 0; // Outside the map, so no trees.
         }
         
         // Get the landmask value for the current pixel.
-        int landmaskValue = EarthMapCreator.Layers.LandMaskMap.IntValues[regionX][regionZ].GetInt(relativeX, relativeZ);
+        int landmaskValue = EarthMapCreator.Layers.Get(MapPlane.LandMask, blockX, blockZ);
 
         // If the landmask value is 0 (or whatever signifies water), return 0 for tree density.
         if (landmaskValue == 0)

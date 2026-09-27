@@ -2,7 +2,7 @@
 pipeline/koppen.py — Köppen-Geiger climate classification.
 Replaces koppen.sh.
 """
-import zipfile
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -50,38 +50,35 @@ KOPPEN_LUT = {
 
 
 def _get_koppen_tif(datasets_dir: Path, koppen_dir: Path, cfg) -> Path:
-    """
-    Locate or download the Köppen source TIF.
-    Checks in order:
-      1. Standalone .tif in datasets/ (any koppen_geiger_*.tif)
-      2. Zip file (koppen_geiger_tif.zip) in datasets/ — extract from it
-      3. Download zip from cfg.KOPPEN_URL
-    Returns path to a local .tif file.
-    """
-    # 1. Standalone TIF already in datasets/
-    candidates = sorted(datasets_dir.glob("koppen_geiger_*.tif"))
-    if candidates:
-        return candidates[0]
+    """Use the 1901–1930, 0.00833333° (~1 km) Beck Köppen classification."""
+    source_tif = koppen_dir / "1901_1930_koppen_geiger_0p00833333.tif"
+    if source_tif.exists():
+        return source_tif
 
-    # 2. Zip in datasets/
     koppen_zip = datasets_dir / "koppen_geiger_tif.zip"
-
     if not koppen_zip.exists():
         download_file(cfg.KOPPEN_URL, str(koppen_zip), desc="koppen_geiger_tif.zip")
 
-    dest_tif = koppen_dir / "koppen_source.tif"
-    if not dest_tif.exists():
-        with zipfile.ZipFile(koppen_zip) as z:
-            tif_names = [n for n in z.namelist() if n.endswith(".tif")]
-            if not tif_names:
-                raise FileNotFoundError("No .tif file found in Köppen zip")
-            # Prefer high-res (0p00833333 ≈ 1km); fall back to first .tif
-            preferred = [n for n in tif_names if "0p00833333" in n]
-            pick = preferred[0] if preferred else tif_names[0]
-            z.extract(pick, koppen_dir)
-            (koppen_dir / pick).rename(dest_tif)
+    with zipfile.ZipFile(koppen_zip) as archive:
+        matches = [
+            name for name in archive.namelist()
+            if Path(name).name == "koppen_geiger_0p00833333.tif"
+            and "1901_1930" in Path(name).parts
+        ]
+        if len(matches) != 1:
+            raise ValueError(
+                "Expected exactly one 1901_1930/koppen_geiger_0p00833333.tif "
+                f"in {koppen_zip}; found {matches}"
+            )
+        temporary = source_tif.with_suffix(".tmp")
+        try:
+            with archive.open(matches[0]) as source, temporary.open("wb") as target:
+                shutil.copyfileobj(source, target)
+            temporary.replace(source_tif)
+        finally:
+            temporary.unlink(missing_ok=True)
 
-    return dest_tif
+    return source_tif
 
 
 def run(work_dir: Path, datasets_dir: Path, grid: MasterGrid, bounds: Bounds4326, cfg):

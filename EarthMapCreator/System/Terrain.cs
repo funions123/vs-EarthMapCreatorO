@@ -12,6 +12,9 @@ namespace EarthMapCreator;
 public class Terrain : ModSystem
 {
     private ICoreServerAPI _api;
+    // Fill base rock after vanilla terrain (0) but before rock strata (0.1).
+    public override double ExecuteOrder() => 0.05;
+
     
     public override void StartServerSide(ICoreServerAPI api)
     {
@@ -37,22 +40,10 @@ public class Terrain : ModSystem
         var layers = EarthMapCreator.Layers;
         int chunkSize = _api.WorldManager.ChunkSize;
 
-        // --- SAFETY CHECK ---
-        if (regionX < 0 || regionX >= layers.HeightMap.IntValues.Length || 
-            regionZ < 0 || regionZ >= layers.HeightMap.IntValues[0].Length)
-        {
+        if (!layers.Contains(request.ChunkX * chunkSize, request.ChunkZ * chunkSize))
             return;
-        }
 
-        // Get all required maps for this region
-        IntDataMap2D heightMap = layers.HeightMap.IntValues[regionX][regionZ];
-        IntDataMap2D lakeDepthMap = layers.LakeDepthMap.IntValues[regionX][regionZ];
-        IntDataMap2D lakeMaskMap = layers.LakeMaskMap.IntValues[regionX][regionZ];
-        IntDataMap2D landMaskMap = layers.LandMaskMap.IntValues[regionX][regionZ];
-        IntDataMap2D oceanBathyMap = layers.OceanBathyMap.IntValues[regionX][regionZ];
-        IntDataMap2D riverMap = layers.RiverMap.IntValues[regionX][regionZ];
-        IntDataMap2D riverSurfaceMap = layers.RiverSurfaceMap.IntValues[regionX][regionZ];
-        IntDataMap2D riverDepthMap = layers.RiverDepthMap.IntValues[regionX][regionZ];
+        MapRegion region = layers.GetRegion(regionX, regionZ);
         
         // Get chunk data and config
         IServerChunk[] chunks = request.Chunks;
@@ -64,17 +55,17 @@ public class Terrain : ModSystem
         int rock = config.defaultRockId;
         int water = config.waterBlockId;
         int saltWater = config.saltWaterBlockId;
+        const int salineLakeMask = 128; // Geo/pipeline/lakes.py SALINE_LAKE
         int seaLevel = 92;
         
-        // Cut maps to chunk size
-        int[,] bisectedHeightMap = CutHeightMapForChunk(heightMap, new Vec2i(chunkX, chunkZ), new Vec2i(regionX, regionZ));
-        int[,] bisectedLakeDepthMap = CutHeightMapForChunk(lakeDepthMap, new Vec2i(chunkX, chunkZ), new Vec2i(regionX, regionZ));
-        int[,] bisectedLakeMaskMap = CutHeightMapForChunk(lakeMaskMap, new Vec2i(chunkX, chunkZ), new Vec2i(regionX, regionZ));
-        int[,] bisectedLandMaskMap = CutHeightMapForChunk(landMaskMap, new Vec2i(chunkX, chunkZ), new Vec2i(regionX, regionZ));
-        int[,] bisectedOceanBathyMap = CutHeightMapForChunk(oceanBathyMap, new Vec2i(chunkX, chunkZ), new Vec2i(regionX, regionZ));
-        int[,] bisectedRiverMap = CutHeightMapForChunk(riverMap, new Vec2i(chunkX, chunkZ), new Vec2i(regionX, regionZ));
-        int[,] bisectedRiverSurfaceMap = CutHeightMapForChunk(riverSurfaceMap, new Vec2i(chunkX, chunkZ), new Vec2i(regionX, regionZ));
-        int[,] bisectedRiverDepthMap = CutHeightMapForChunk(riverDepthMap, new Vec2i(chunkX, chunkZ), new Vec2i(regionX, regionZ));
+        int[,] bisectedHeightMap = CutHeightMapForChunk(region, MapPlane.Height, chunkX, chunkZ);
+        int[,] bisectedLakeDepthMap = CutHeightMapForChunk(region, MapPlane.LakeDepth, chunkX, chunkZ);
+        int[,] bisectedLakeMaskMap = CutHeightMapForChunk(region, MapPlane.LakeMask, chunkX, chunkZ);
+        int[,] bisectedLandMaskMap = CutHeightMapForChunk(region, MapPlane.LandMask, chunkX, chunkZ);
+        int[,] bisectedOceanBathyMap = CutHeightMapForChunk(region, MapPlane.Bathymetry, chunkX, chunkZ);
+        int[,] bisectedRiverMap = CutHeightMapForChunk(region, MapPlane.River, chunkX, chunkZ);
+        int[,] bisectedRiverSurfaceMap = CutHeightMapForChunk(region, MapPlane.RiverSurface, chunkX, chunkZ);
+        int[,] bisectedRiverDepthMap = CutHeightMapForChunk(region, MapPlane.RiverDepth, chunkX, chunkZ);
         
         // --- Determine max Y for loop boundary ---
         var maxY = int.MinValue;
@@ -124,7 +115,7 @@ public class Terrain : ModSystem
                 {
                     surfaceHeight = bisectedHeightMap[lx, lz];
                     groundHeight = Math.Max(1, surfaceHeight - bisectedLakeDepthMap[lx, lz]);
-                    fluidBlockId = water;
+                    fluidBlockId = bisectedLakeMaskMap[lx, lz] == salineLakeMask ? saltWater : water;
                 }
                 else if (!isLand) // Case 2: Ocean
                 {
@@ -191,52 +182,15 @@ public class Terrain : ModSystem
         return z * chunksize + x;
     }
     
-    private int[,] CutHeightMapForChunk(IntDataMap2D heightMap, Vec2i chunkCoords, Vec2i regionCoords)
+    private int[,] CutHeightMapForChunk(MapRegion region, MapPlane plane, int chunkX, int chunkZ)
     {
-        int chunkSize = _api.WorldManager.ChunkSize;
-        int chunkSized2 = chunkSize / 2;
-        
-        int[,] chunkElevation = new int[chunkSize, chunkSize];
-
-        // top left is least most 
-        // e.g. region x/z              1000, 1000
-        // topleft chunk x/z            16000,16000 
-        // bottom right chunk x/z       16015,16015
-        // global top left chunk coordinate of this region
-        Vec2i regionTopLeftChunk = new Vec2i(
-            chunkSized2 * regionCoords.X,
-            chunkSized2 * regionCoords.Y
-        );
-        
-        // subtract 
-        Vec2i localChunk = chunkCoords - regionTopLeftChunk;
-        
-        int maxX = (1+localChunk.X) * chunkSize;
-        int maxZ = (1+localChunk.Y) * chunkSize;
-
-        int minX = localChunk.X * chunkSize;
-        int minZ = localChunk.Y * chunkSize;
-        
-        int lx = 0;
-        int lz = 0;
-        for (int x = minX; x < maxX; x++)
-        {
-            for (int z = minZ; z < maxZ; z++)
-            {
-                int height = heightMap.GetInt(x, z);
-                chunkElevation[lx, lz] = height;
-                lz++;
-            }
-
-            lx++;
-            lz = 0;
-        }
-        
-        return chunkElevation;
-    }
-
-    private bool IsFreshWaterHere(GlobalConfig config, IntDataMap2D riverMap, int x, int z)
-    {
-        return riverMap.GetInt(x, z) > 0;
+        int size = _api.WorldManager.ChunkSize;
+        int[,] result = new int[size, size];
+        int startX = chunkX % (_api.WorldManager.RegionSize / size) * size;
+        int startZ = chunkZ % (_api.WorldManager.RegionSize / size) * size;
+        for (int x = 0; x < size; x++)
+            for (int z = 0; z < size; z++)
+                result[x, z] = region.Get(plane, startX + x, startZ + z);
+        return result;
     }
 }

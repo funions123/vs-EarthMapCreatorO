@@ -143,7 +143,7 @@ def run(work_dir: Path, datasets_dir: Path, grid: MasterGrid, bounds: Bounds4326
     if not lakes_shp:
         raise FileNotFoundError(f"ne_10m_lakes.shp not found in {lakes_extract}")
 
-    _clip_vector_to_gpkg(
+    _clip_lakes_to_gpkg(
         str(lakes_shp),
         str(work_dir / "crop_lakes.gpkg"),
         lon_min, lat_min, lon_max, lat_max,
@@ -185,17 +185,19 @@ def _clip_and_project_shapes(
 
 
 
-def _clip_vector_to_gpkg(
+def _clip_lakes_to_gpkg(
     src_path: str,
     dst_path: str,
     lon_min, lat_min, lon_max, lat_max,
     bbox_geom,
 ):
-    """Clip a vector dataset to bbox and write as GeoPackage."""
+    """Clip natural Natural Earth lakes to a GeoPackage, excluding reservoirs."""
     if Path(dst_path).exists():
         Path(dst_path).unlink()
 
     with fiona.open(src_path, bbox=(lon_min, lat_min, lon_max, lat_max)) as src:
+        if "featurecla" not in src.schema["properties"]:
+            raise ValueError("Natural Earth lake dataset is missing featurecla")
         meta = src.meta.copy()
         meta.update(driver="GPKG")
         # Ensure geometry type is compatible (clipping may produce multi-geoms)
@@ -206,6 +208,8 @@ def _clip_vector_to_gpkg(
 
         with fiona.open(dst_path, "w", **meta) as dst:
             for feat in src:
+                if feat["properties"]["featurecla"] not in ("Lake", "Alkaline Lake"):
+                    continue
                 geom = shape(feat["geometry"])
                 clipped = geom.intersection(bbox_geom)
                 if not clipped.is_empty:

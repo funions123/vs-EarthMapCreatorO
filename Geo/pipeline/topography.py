@@ -6,16 +6,15 @@ import zipfile
 from pathlib import Path
 
 import numpy as np
-import rasterio
-from rasterio.warp import reproject, Resampling
+from rasterio.warp import Resampling
 from rasterio.features import rasterize as rio_rasterize
-from shapely.geometry import box, shape, mapping
+from shapely.geometry import box, shape
 from shapely.ops import transform as shp_transform
 from pyproj import Transformer
 import fiona
 
 from util.projection import MasterGrid, Bounds4326
-from util.raster import warp_to_grid, rescale, align_to_grid, save_array
+from util.raster import warp_to_grid, save_array
 
 
 def run(work_dir: Path, datasets_dir: Path, grid: MasterGrid, bounds: Bounds4326, cfg):
@@ -24,14 +23,12 @@ def run(work_dir: Path, datasets_dir: Path, grid: MasterGrid, bounds: Bounds4326
       - work_dir/bathymetry/crop.tif              (Int16, master grid, GEBCO)
       - work_dir/bathymetry.tif                   (Byte, scaled ocean depths)
       - work_dir/dem/crop_gmted_for_lakes.tif     (Int16, master grid)
-      - work_dir/cropped_dem.tif                  (UInt16, baseline land/lake elevations)
+      - work_dir/cropped_dem.tif                  (Int16, merged signed elevations)
     """
     bathy_dir = work_dir / "bathymetry"
     dem_dir = work_dir / "dem"
     bathy_dir.mkdir(parents=True, exist_ok=True)
     dem_dir.mkdir(parents=True, exist_ok=True)
-
-    lon_min, lat_min, lon_max, lat_max = bounds
 
     # ------------------------------------------------------------------ #
     # 1. Warp GEBCO to master grid (Int16)
@@ -91,60 +88,12 @@ def run(work_dir: Path, datasets_dir: Path, grid: MasterGrid, bounds: Bounds4326
 
     save_array(bathy_scaled, str(work_dir / "bathymetry.tif"), grid, dtype="uint8", nodata=0)
 
-    # ------------------------------------------------------------------ #
-    # 4. Encode signed elevations as absolute Vintage Story world Y.
-    #    This preserves depressions such as the Dead Sea below Y=92.
-    # ------------------------------------------------------------------ #
-    gebco_y = _encode_terrain_y(gebco_arr, cfg)
-    gmted_y = _encode_terrain_y(gmted_arr, cfg)
-
-    gebco_norm_path = bathy_dir / "gebco_land_normalized.tif"
-    gmted_norm_path = dem_dir / "dem_land_normalized.tif"
-    save_array(gebco_y, str(gebco_norm_path), grid, dtype="uint8", nodata=0)
-    save_array(gmted_y, str(gmted_norm_path), grid, dtype="uint8", nodata=0)
-
-    # ------------------------------------------------------------------ #
-    # 5. Build initial lake mask from crop_lakes.gpkg
-    # ------------------------------------------------------------------ #
-    lakes_mask_arr = _rasterize_lakes(
-        work_dir / "crop_lakes.gpkg", grid, bounds
-    )
-    save_array(
-        lakes_mask_arr,
-        str(work_dir / "lakes_mask_initial.tif"),
-        grid,
-        dtype="uint8",
-        nodata=0,
-    )
-
-    # ------------------------------------------------------------------ #
-    # 6. Align GMTED and lake mask to GEBCO reference grid
-    #    (inline port of aligner.py — they're already on the same master grid,
-    #    so this is a no-op but kept for correctness if resampling drifted)
-    # ------------------------------------------------------------------ #
-    # The gebco_norm is already the reference. GMTED was warped to the same
-    # grid in step 2, so alignment is guaranteed. Copy to _aligned paths.
-    gebco_aligned = bathy_dir / "gebco_land_aligned.tif"
-    import shutil
-    shutil.copy(gebco_norm_path, gebco_aligned)
-
-    gmted_aligned = dem_dir / "dem_land_aligned.tif"
-    align_to_grid(str(gmted_norm_path), str(gmted_aligned), grid)
-
-    lakes_mask_aligned_path = work_dir / "lakes_mask_initial_aligned.tif"
-    align_to_grid(str(work_dir / "lakes_mask_initial.tif"), str(lakes_mask_aligned_path), grid)
-
-    # ------------------------------------------------------------------ #
-    # 7. Use GMTED at inland lakes to seed their surface estimates. The final
-    # polygon footprint, level, bed and bank are computed after PNG resizing.
-    # ------------------------------------------------------------------ #
-    _merge_topography(
-        gmted_aligned,
-        gebco_aligned,
-        lakes_mask_aligned_path,
-        work_dir / "cropped_dem.tif",
-        grid,
-    )
+    # Merge before scaling so the peak is measured only from the source used
+    # for each map pixel. Keep signed metres until the final output grid is set.
+    lakes_mask_arr = _rasterize_lakes(work_dir / "crop_lakes.gpkg", grid, bounds)
+    elevation = np.where(lakes_mask_arr == 1, gmted_arr, gebco_arr)
+    save_array(elevation, str(work_dir / "cropped_dem.tif"), grid,
+               dtype="int16", nodata=-32768)
     print("[topo] Topography processing done.")
 
 
@@ -250,16 +199,23 @@ def _scale_bathymetry(
     return np.clip(result, 0, 255).astype(np.uint8)
 
 
-def _encode_terrain_y(elevation_metres: np.ndarray, cfg) -> np.ndarray:
-    """Encode signed metres as absolute world Y; zero remains the sea datum."""
-    elevation = elevation_metres.astype(np.float64)
+def _encode_terrain_y(elevation_metres: np.ndarray, cfg, peak=None) -> np.ndarray:
+    """Map the highest positive elevation to Y=255, anchored at the sea datum."""
+    elevation = np.asarray(elevation_metres)
     invalid = (elevation <= -32768) | ~np.isfinite(elevation)
-    world_y = float(cfg.TERRAIN_SEA_LEVEL_Y) + np.rint(
-        elevation / float(cfg.TERRAIN_METRES_PER_BLOCK)
-    )
-    world_y = np.clip(world_y, 1, int(cfg.TERRAIN_MAX_Y)).astype(np.uint8)
+    valid = elevation[~invalid]
+    sea = float(cfg.TERRAIN_SEA_LEVEL_Y)
+    if not 1 <= sea < 255:
+        raise ValueError("TERRAIN_SEA_LEVEL_Y must be between 1 and 254")
+    if peak is None:
+        if not valid.size:
+            raise ValueError("No valid elevations in source DEM")
+        peak = max(0.0, float(valid.max()))
+    # With no positive terrain, zero metres remains at sea level.
+    scale = (255 - sea) / peak if peak > 0 else 0.0
+    world_y = np.clip(sea + np.rint(elevation.astype(np.float32) * scale), 1, 255)
     world_y[invalid] = 0
-    return world_y
+    return world_y.astype(np.uint8)
 
 def _rasterize_lakes(gpkg_path: Path, grid: MasterGrid, bounds: Bounds4326) -> np.ndarray:
     """Rasterize lake polygons onto the master grid (1=lake, 0=no lake)."""
@@ -268,7 +224,6 @@ def _rasterize_lakes(gpkg_path: Path, grid: MasterGrid, bounds: Bounds4326) -> n
         return np.zeros((grid.height, grid.width), dtype=np.uint8)
 
     lon_min, lat_min, lon_max, lat_max = bounds
-    bbox_geom = box(lon_min, lat_min, lon_max, lat_max)
     transformer = Transformer.from_crs("EPSG:4326", grid.crs, always_xy=True)
 
     shapes = []
@@ -292,23 +247,3 @@ def _rasterize_lakes(gpkg_path: Path, grid: MasterGrid, bounds: Bounds4326) -> n
     )
 
 
-def _merge_topography(
-    gmted_path: Path,
-    gebco_path: Path,
-    mask_path: Path,
-    out_dem_path: Path,
-    grid: MasterGrid,
-):
-    """Use GMTED world Y within every lake footprint, GEBCO elsewhere."""
-    with rasterio.open(str(gmted_path)) as src:
-        dem_arr = src.read(1, masked=True).astype(np.int32).filled(0)
-    with rasterio.open(str(gebco_path)) as src:
-        gebco_arr = src.read(1, masked=True).astype(np.int32).filled(0)
-    with rasterio.open(str(mask_path)) as src:
-        mask_arr = src.read(1, masked=True).filled(0).astype(np.uint8)
-
-    surface_map = gebco_arr.copy()
-    np.copyto(surface_map, dem_arr, where=mask_arr == 1)
-    surface_map = np.clip(surface_map, 0, 255).astype(np.uint8)
-
-    save_array(surface_map, str(out_dem_path), grid, dtype="uint8", nodata=0)

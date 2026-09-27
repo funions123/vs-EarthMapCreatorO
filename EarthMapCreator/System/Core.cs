@@ -11,7 +11,7 @@ namespace EarthMapCreator;
 public class EarthMapCreator : ModSystem
 {
     public static Config config;
-    public static MapLayers Layers; 
+    public static RegionStore Layers;
 
     public override void Start(ICoreAPI api)
     {
@@ -43,8 +43,14 @@ public class EarthMapCreator : ModSystem
     private void LoadMapLayers(ICoreAPI api)
     {
         string folder = ResolveMapDirectory(api);
-        Mod.Logger.Notification("Loading Earth map layers from {0}", folder);
-        Layers = new MapLayers(folder);
+        Mod.Logger.Notification("Loading Earth map regions from {0}", folder);
+        Layers = new RegionStore(Path.Combine(folder, "earthmap.regions"));
+    }
+
+    public override void Dispose()
+    {
+        Layers?.Dispose();
+        Layers = null;
     }
 
     internal static string ResolveMapDirectory(ICoreAPI api)

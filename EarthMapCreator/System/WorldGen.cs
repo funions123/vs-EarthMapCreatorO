@@ -33,37 +33,25 @@ public class EarthWorldGenerator : ModSystem
         var player = args.Caller.Player;
         BlockPos pos = player.Entity.Pos.AsBlockPos;
         
+        var layers = EarthMapCreator.Layers;
+        if (!layers.Contains(pos.X, pos.Z))
+            return TextCommandResult.Error("Position is outside the Earth map");
         int regionX = pos.X / _api.WorldManager.RegionSize;
         int regionZ = pos.Z / _api.WorldManager.RegionSize;
-
-        int relativeX = pos.X - regionX * _api.WorldManager.RegionSize;
-        int relativeZ = pos.Z - regionZ * _api.WorldManager.RegionSize;
-        
-        IntDataMap2D tree = EarthMapCreator.Layers.TreeMap.IntValues[regionX][regionZ];
-        int treeHere = tree.GetInt(relativeX, relativeZ); 
-        
-        IntDataMap2D terrain = EarthMapCreator.Layers.HeightMap.IntValues[regionX][regionZ];
-        int terrainHere = terrain.GetInt(relativeX, relativeZ);
-        
-        IntDataMap2D bathyMap = EarthMapCreator.Layers.OceanBathyMap.IntValues[regionX][regionZ];
-        int bathyHere = bathyMap.GetInt(relativeX, relativeZ);
-        
-        IntDataMap2D lakeDepthMap = EarthMapCreator.Layers.LakeDepthMap.IntValues[regionX][regionZ];
-        int lakeDepthHere = lakeDepthMap.GetInt(relativeX, relativeZ);
+        int relativeX = pos.X % _api.WorldManager.RegionSize;
+        int relativeZ = pos.Z % _api.WorldManager.RegionSize;
+        MapRegion region = layers.GetRegion(regionX, regionZ);
+        int treeHere = region.Get(MapPlane.Tree, relativeX, relativeZ);
+        int terrainHere = region.Get(MapPlane.Height, relativeX, relativeZ);
+        int bathyHere = region.Get(MapPlane.Bathymetry, relativeX, relativeZ);
+        int lakeDepthHere = region.Get(MapPlane.LakeDepth, relativeX, relativeZ);
         int lakeBedHere = Math.Max(1, terrainHere - lakeDepthHere);
-        
-        IntDataMap2D landMaskMap = EarthMapCreator.Layers.LandMaskMap.IntValues[regionX][regionZ];
-        int landMaskHere = landMaskMap.GetInt(relativeX, relativeZ);
-        
-        IntDataMap2D lakeMaskMap = EarthMapCreator.Layers.LakeMaskMap.IntValues[regionX][regionZ];
-        int lakeMaskHere = lakeMaskMap.GetInt(relativeX, relativeZ);
-        int riverMaskHere = EarthMapCreator.Layers.RiverMap.IntValues[regionX][regionZ].GetInt(relativeX, relativeZ);
-        int riverSurfaceHere = EarthMapCreator.Layers.RiverSurfaceMap.IntValues[regionX][regionZ].GetInt(relativeX, relativeZ);
-        int riverDepthHere = EarthMapCreator.Layers.RiverDepthMap.IntValues[regionX][regionZ].GetInt(relativeX, relativeZ);
-        
-        int zoneId = EarthMapCreator.Layers.ClimateMap.IntValues[regionX][regionZ].GetInt(relativeX, relativeZ);
-        ClimateZone zone = (ClimateZone)zoneId;
-        (float temp, float rainRel) climate = ClimateMatcher.GetClimateValues(zone);
+        int landMaskHere = region.Get(MapPlane.LandMask, relativeX, relativeZ);
+        int lakeMaskHere = region.Get(MapPlane.LakeMask, relativeX, relativeZ);
+        int riverMaskHere = region.Get(MapPlane.River, relativeX, relativeZ);
+        int riverSurfaceHere = region.Get(MapPlane.RiverSurface, relativeX, relativeZ);
+        int riverDepthHere = region.Get(MapPlane.RiverDepth, relativeX, relativeZ);
+        ClimateZone zone = (ClimateZone)region.Get(MapPlane.Climate, relativeX, relativeZ);
         
         String msg = $"At {pos.X}, {pos.Z}, (region {regionX}, {regionZ})\n" +
                      $"Climate - {zone}\n" +

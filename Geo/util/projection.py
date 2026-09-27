@@ -2,14 +2,16 @@
 util/projection.py — CRS selection and master grid computation.
 Replaces getutm_epsg.py and getbbox_nativeproj_fromraster.py.
 """
+import math
 from collections import namedtuple
 
 from pyproj import CRS
 from pyproj.aoi import AreaOfInterest
 from pyproj.database import query_utm_crs_info
 from rasterio.crs import CRS as RioCRS
-from rasterio.warp import calculate_default_transform
+from rasterio.transform import from_origin
 from rasterio.transform import array_bounds
+from rasterio.warp import transform_bounds
 from pyproj import Transformer
 
 MasterGrid = namedtuple("MasterGrid", ["transform", "width", "height", "crs"])
@@ -52,17 +54,13 @@ def get_master_grid(cfg, proj_crs: str):
     """
     rio_crs = RioCRS.from_user_input(proj_crs)
 
-    transform, width, height = calculate_default_transform(
-        "EPSG:4326",
-        rio_crs,
-        width=2,
-        height=2,
-        left=cfg.LON_MIN,
-        bottom=cfg.LAT_MIN,
-        right=cfg.LON_MAX,
-        top=cfg.LAT_MAX,
-        resolution=(cfg.FINAL_RES, cfg.FINAL_RES),
+    west, south, east, north = transform_bounds(
+        "EPSG:4326", rio_crs, cfg.LON_MIN, cfg.LAT_MIN,
+        cfg.LON_MAX, cfg.LAT_MAX, densify_pts=21,
     )
+    width = math.ceil((east - west) / cfg.FINAL_RES)
+    height = math.ceil((north - south) / cfg.FINAL_RES)
+    transform = from_origin(west, north, cfg.FINAL_RES, cfg.FINAL_RES)
 
     grid = MasterGrid(transform=transform, width=width, height=height, crs=rio_crs)
     bounds = get_actual_bounds_4326(grid)

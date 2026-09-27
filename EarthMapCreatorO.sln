@@ -14,6 +14,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Geo", "Geo", "{6D11463C-F54
 		Geo\pipeline\koppen.py = Geo\pipeline\koppen.py
 		Geo\pipeline\land.py = Geo\pipeline\land.py
         Geo\pipeline\lakes.py = Geo\pipeline\lakes.py
+		Geo\pipeline\river_profiles.py = Geo\pipeline\river_profiles.py
         Geo\pipeline\rivers.py = Geo\pipeline\rivers.py
 		Geo\pipeline\topography.py = Geo\pipeline\topography.py
 		Geo\pipeline\translate.py = Geo\pipeline\translate.py

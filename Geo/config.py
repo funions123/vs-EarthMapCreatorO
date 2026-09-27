@@ -1,32 +1,34 @@
 # config.py — edit this before each run
 
 # --- Bounding Box (EPSG:4326) ---
-# Southern Levant: square 3 by 3 degree test extent in UTM 36N.
-# Covers the requested 30-33 N, 34-35 E area and includes the full Dead Sea.
-LAT_MIN = 30.0
-LAT_MAX = 33.0
-LON_MIN = 33.0
-LON_MAX = 36.0
+# Western/Central North America: south, west, north, east = 30.59, -120.00, 49.00, -94.04.
+LAT_MIN = 30.59
+LAT_MAX = 49.00
+LON_MIN = -120.00
+LON_MAX = -94.04
 
 # --- Output Resolution ---
-FINAL_WIDTH = 10240    # final PNG width in pixels (must be multiple of 512)
-FINAL_LENGTH = 10240   # final PNG height in pixels (must be multiple of 512)
+# Vintage Story's "25k blocks" world preset is 25,600 (50 regions of 512).
+FINAL_WIDTH = 25600
+FINAL_LENGTH = 25600
 FINAL_RES = 300        # internal raster pixel size in metres
 
 # --- Projection ---
 # Set to None to auto-select UTM (for regions < 13° wide) or EPSG:3857 (wider).
 # Set to a CRS string (e.g. "EPSG:32633", "ESRI:54080") to override.
-FORCE_FINAL_PROJ = "EPSG:32636"
+FORCE_FINAL_PROJ = None
 
 # --- Resize final PNGs to FINAL_WIDTH x FINAL_LENGTH ---
 RESIZE_MAP = True
 
 # --- Terrain Elevation Encoding ---
-# World Y assigned to zero metres elevation and metres represented per block.
-# Negative elevations remain below TERRAIN_SEA_LEVEL_Y instead of being clipped.
+# Zero metres maps to Y=92. The highest positive elevation on the final map
+# maps to Y=255; negative elevations use the same scale below the sea datum.
 TERRAIN_SEA_LEVEL_Y = 92
-TERRAIN_METRES_PER_BLOCK = 10.0
-TERRAIN_MAX_Y = 250
+# Natural Earth "Alkaline Lake" polygons are saline automatically. Add exact
+# "name" field values here for salt lakes labeled only as "Lake" in that data.
+# Unlisted "Lake" polygons remain freshwater; reservoirs remain excluded.
+SALINE_LAKE_NAMES = []
 
 # --- Bathymetry Scaling ---
 ENABLE_BATHY_CUSTOM_SCALE = True
@@ -46,11 +48,27 @@ BATHY_EXAGGERATE_THRESHOLD = -100
 # Output byte value at the threshold (must be between MAXDEPTH and SEALEVEL)
 BATHY_EXAGGERATE_MIDPOINT = 80
 
-# --- OSM Rivers ---
-# Line-only waterways are buffered in projected metres; mapped polygons retain
-# their actual banks. At ~30 m/block, 45 m generally renders as 2-3 blocks.
-RIVER_DEFAULT_WIDTH_METRES = 45.0
-RIVER_MAX_LINE_WIDTH_METRES = 250.0
+# --- HydroRIVERS ---
+# Centerline widths grow with the square root of mean discharge (DIS_AV_CMS).
+# At the reference flow, the channel gains one output block over its minimum.
+RIVER_MIN_WIDTH_PIXELS = 2.0
+RIVER_WIDTH_REFERENCE_FLOW_CMS = 100.0
+RIVER_MAX_WIDTH_PIXELS = 8.0
+# Suppress reaches whose long-term mean flow is below 1 m³/s; a zero-flow
+# reach across Badwater Basin is mapped despite its large drainage area.
+# This is a coarse dry-channel filter, not a seasonal-river classification.
+RIVER_MIN_FLOW_CMS = 1.0
+# Include reaches draining at least this many km² upstream. Set to 0 for all
+# HydroRIVERS reaches. Higher values remove smaller headwaters and tributaries.
+RIVER_MIN_UPSTREAM_AREA_SQKM = 1000.0
+# Scale the area threshold up when output is smaller than the 25,600-block
+# reference world. Halving the shortest map dimension doubles the threshold.
+RIVER_AUTO_SCALE_UPSTREAM_AREA = True
+# Extend large, mapped terminal rivers across short sea-level deltas to the
+# nearest coastline. This approximates pre-diversion flow where the source
+# centerline now ends inland (e.g. the Colorado River delta).
+RIVER_COASTAL_CONNECTION_MIN_UPSTREAM_AREA_SQKM = 10000.0
+RIVER_COASTAL_CONNECTION_MAX_DISTANCE_METRES = 30000.0
 RIVER_SURFACE_WINDOW_BLOCKS = 5
 RIVER_MIN_DEPTH_BLOCKS = 1
 RIVER_MAX_DEPTH_BLOCKS = 3
@@ -65,4 +83,4 @@ GET_DATASETS_LOCALLY = True
 
 # --- Dataset URLs ---
 OSM_LANDPOLYGONS_URL = "https://osmdata.openstreetmap.de/download/land-polygons-complete-4326.zip"
-KOPPEN_URL = "https://figshare.com/ndownloader/files/45057352"
+KOPPEN_URL = "https://ndownloader.figshare.com/files/61012822"  # Beck et al. (2023), corrected archive (2026)

@@ -34,24 +34,10 @@
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
-    <!-- Visual Studio's fast up-to-date check must not bypass map staging on F5. -->
+    <!-- Visual Studio's fast up-to-date check must not bypass the artifact check on F5. -->
     <DisableFastUpToDateCheck>true</DisableFastUpToDateCheck>
     <EarthMapPipelineDir>$(MSBuildProjectDirectory)/../Geo/work/build</EarthMapPipelineDir>
-    <EarthMapDebugDataDir>$(MSBuildProjectDirectory)/../Geo/work/debug-data</EarthMapDebugDataDir>
   </PropertyGroup>
-
-  <ItemGroup Condition="'$(Configuration)' == 'Debug'">
-    <EarthMapDebugArtifact Include="$(EarthMapPipelineDir)/bathymetry_heightmap.png" />
-    <EarthMapDebugArtifact Include="$(EarthMapPipelineDir)/heightmap.png" />
-    <EarthMapDebugArtifact Include="$(EarthMapPipelineDir)/lake_mask.png" />
-    <EarthMapDebugArtifact Include="$(EarthMapPipelineDir)/lake_depth.png" />
-    <EarthMapDebugArtifact Include="$(EarthMapPipelineDir)/landmask.png" />
-    <EarthMapDebugArtifact Include="$(EarthMapPipelineDir)/climate.png" />
-    <EarthMapDebugArtifact Include="$(EarthMapPipelineDir)/tree.png" />
-    <EarthMapDebugArtifact Include="$(EarthMapPipelineDir)/river.png" />
-    <EarthMapDebugArtifact Include="$(EarthMapPipelineDir)/river_surface.png" />
-    <EarthMapDebugArtifact Include="$(EarthMapPipelineDir)/river_depth.png" />
-  </ItemGroup>
 
   <Import Project="Properties/localSettings.props" Condition="Exists('Properties/localSettings.props')" />
 
@@ -85,7 +71,6 @@
     <Content Include="assets/**/*" CopyToOutputDirectory="PreserveNewest" />
     <RuntimeHostConfigurationOption Include="System.Drawing.EnableUnixSupport" Value="true" />
     <PackageReference Include="OpenTK.Mathematics" Version="4.9.4" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.11" />
   </ItemGroup>
 
   <Target Name="GenerateModInfo" AfterTargets="Build">
@@ -120,17 +105,10 @@
   </Target>
 
   <Target Name="StageEarthMapForDebug" AfterTargets="GenerateModInfo" Condition="'$(Configuration)' == 'Debug'">
-    <ItemGroup>
-      <EarthMapMissingArtifact Include="@(EarthMapDebugArtifact)" Condition="!Exists('%(Identity)')" />
-    </ItemGroup>
-    <Error Condition="'@(EarthMapMissingArtifact)' != ''"
-           Text="Missing pipeline PNG(s): @(EarthMapMissingArtifact, ', '). Run Geo/launch.py before debugging." />
-    <MakeDir Directories="$(EarthMapDebugDataDir)/EarthMap" />
-    <Copy SourceFiles="@(EarthMapDebugArtifact)"
-          DestinationFolder="$(EarthMapDebugDataDir)/EarthMap/"
-          SkipUnchangedFiles="true" />
+    <Error Condition="!Exists('$(EarthMapPipelineDir)/earthmap.regions')"
+           Text="Missing earthmap.regions. Run Geo/launch.py before debugging." />
     <WriteLinesToFile File="$(TargetDir)earthmap-debug-path.txt"
-                      Lines="$([System.IO.Path]::GetFullPath('$(EarthMapDebugDataDir)/EarthMap'))"
+                      Lines="$([System.IO.Path]::GetFullPath('$(EarthMapPipelineDir)'))"
                       Overwrite="true" />
   </Target>
 

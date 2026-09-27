@@ -86,8 +86,11 @@ def main():
 
     log("=== Stage: translate ===")
     translate.run(WORK_DIR, grid, bounds, cfg)
+    from pipeline.region_store import bake
+    log("=== Stage: region store ===")
+    bake(BUILD_DIR, cfg.FINAL_WIDTH, cfg.FINAL_LENGTH)
 
-    log("=== Pipeline complete. PNGs in: " + str(BUILD_DIR) + " ===")
+    log("=== Pipeline complete. PNGs and earthmap.regions in: " + str(BUILD_DIR) + " ===")
 
 
 if __name__ == "__main__":

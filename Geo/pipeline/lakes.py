@@ -21,20 +21,32 @@ MAX_DEPTH = 12
 SHORE_WIDTH = 6
 SHORE_SLOPE = 1
 SEA_LEVEL = 92
+# Encoded in lake_mask.png and the LakeMask region plane. Zero is dry; the
+# Vintage Story terrain generator uses the saline value for saltwater blocks.
+FRESH_LAKE = 255
+SALINE_LAKE = 128
 
 
-def _lake_geometries(gpkg: Path, grid: MasterGrid):
+def _lake_geometries(gpkg: Path, grid: MasterGrid, saline_lake_names):
     if not gpkg.exists():
         raise FileNotFoundError(f"Lake polygons not found: {gpkg}")
     transformer = Transformer.from_crs("EPSG:4326", grid.crs, always_xy=True)
+    saline_names = set(saline_lake_names)
     with fiona.open(str(gpkg)) as src:
+        if "featurecla" not in src.schema["properties"]:
+            raise ValueError("Lake polygons are missing featurecla")
         # Union touching polygons so one continuous lake gets one surface level.
-        geometries = [project(transformer.transform, shape(feature["geometry"])).buffer(20)
+        geometries = [(project(transformer.transform, shape(feature["geometry"])).buffer(20),
+                       feature["properties"]["featurecla"] == "Alkaline Lake"
+                       or feature["properties"].get("name") in saline_names)
                       for feature in src if feature["geometry"]]
-    merged = unary_union([geom for geom in geometries if not geom.is_empty])
+    geometries = [(geom, saline) for geom, saline in geometries if not geom.is_empty]
+    merged = unary_union([geom for geom, _ in geometries])
     if merged.is_empty:
         return []
-    return list(merged.geoms) if merged.geom_type == "MultiPolygon" else [merged]
+    saline = unary_union([geom for geom, is_saline in geometries if is_saline])
+    components = list(merged.geoms) if merged.geom_type == "MultiPolygon" else [merged]
+    return [(geom, geom.intersects(saline)) for geom in components]
 
 
 def _pixel_window(geom, transform, width, height):
@@ -54,8 +66,8 @@ def _surface_byte(pixels):
 
 
 def build_lake_maps(gpkg: Path, grid: MasterGrid, height: np.ndarray,
-                    land: np.ndarray):
-    """Mutate 8-bit height/land arrays and return binary mask and uint8 depths.
+                    land: np.ndarray, saline_lake_names=()):
+    """Mutate height/land arrays and return classified lake mask and uint8 depths.
 
     Every output uses the identical final-grid polygon footprint. Water columns
     have one constant height per connected polygon and a bed below that height.
@@ -71,7 +83,7 @@ def build_lake_maps(gpkg: Path, grid: MasterGrid, height: np.ndarray,
     depth = np.zeros_like(height)
     nearest_shore = np.full_like(height, 255)
 
-    for geom in _lake_geometries(gpkg, grid):
+    for geom, saline in _lake_geometries(gpkg, grid, saline_lake_names):
         x0, y0, x1, y1 = _pixel_window(geom, transform, cols, rows)
         if x0 == x1 or y0 == y1:
             continue
@@ -87,7 +99,7 @@ def build_lake_maps(gpkg: Path, grid: MasterGrid, height: np.ndarray,
         level = _surface_byte(original[section][water])
         height_part = height[section]
         mask_part = mask[section]
-        mask_part[water] = 255
+        mask_part[water] = SALINE_LAKE if saline else FRESH_LAKE
         land[section][water] = 255  # Lake must not enter the ocean terrain branch.
         height_part[water] = level
 
@@ -122,12 +134,13 @@ def build_lake_maps(gpkg: Path, grid: MasterGrid, height: np.ndarray,
     return mask, depth
 
 
-def write_lake_maps(work_dir: Path, build_dir: Path, grid: MasterGrid):
+def write_lake_maps(work_dir: Path, build_dir: Path, grid: MasterGrid, cfg):
     with Image.open(build_dir / "heightmap.png") as img:
         height = np.array(img.convert("L"), dtype=np.uint8)
     with Image.open(build_dir / "landmask.png") as img:
         land = np.array(img.convert("L"), dtype=np.uint8)
-    mask, depth = build_lake_maps(work_dir / "crop_lakes.gpkg", grid, height, land)
+    mask, depth = build_lake_maps(work_dir / "crop_lakes.gpkg", grid, height, land,
+                                  cfg.SALINE_LAKE_NAMES)
     Image.fromarray(height).save(build_dir / "heightmap.png")
     Image.fromarray(land).save(build_dir / "landmask.png")
     Image.fromarray(mask).save(build_dir / "lake_mask.png")
