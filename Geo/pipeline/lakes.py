@@ -13,6 +13,7 @@ from shapely.geometry import shape
 from shapely.ops import transform as project, unary_union
 
 from util.projection import MasterGrid
+from pipeline.lake_classification import is_natural_lake
 
 
 # Depth and bank slope are in VS blocks, after the source DEM has been resized.
@@ -20,7 +21,6 @@ MIN_DEPTH = 1
 MAX_DEPTH = 12
 SHORE_WIDTH = 6
 SHORE_SLOPE = 1
-SEA_LEVEL = 92
 # Encoded in lake_mask.png and the LakeMask region plane. Zero is dry; the
 # Vintage Story terrain generator uses the saline value for saltwater blocks.
 FRESH_LAKE = 255
@@ -35,11 +35,13 @@ def _lake_geometries(gpkg: Path, grid: MasterGrid, saline_lake_names):
     with fiona.open(str(gpkg)) as src:
         if "featurecla" not in src.schema["properties"]:
             raise ValueError("Lake polygons are missing featurecla")
-        # Union touching polygons so one continuous lake gets one surface level.
+        # Recheck classification because an existing crop_lakes.gpkg may predate
+        # source-stage filtering.
         geometries = [(project(transformer.transform, shape(feature["geometry"])).buffer(20),
                        feature["properties"]["featurecla"] == "Alkaline Lake"
                        or feature["properties"].get("name") in saline_names)
-                      for feature in src if feature["geometry"]]
+                      for feature in src
+                      if feature["geometry"] and is_natural_lake(feature["properties"])]
     geometries = [(geom, saline) for geom, saline in geometries if not geom.is_empty]
     merged = unary_union([geom for geom, _ in geometries])
     if merged.is_empty:

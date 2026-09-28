@@ -16,6 +16,7 @@ import fiona
 from util.projection import MasterGrid, Bounds4326
 from util.raster import warp_to_grid, save_array
 
+from pipeline.lake_classification import is_natural_lake
 
 def run(work_dir: Path, datasets_dir: Path, grid: MasterGrid, bounds: Bounds4326, cfg):
     """
@@ -167,10 +168,14 @@ def _scale_bathymetry(
     """
     Apply linear or piecewise scaling to ocean depths.
     Input: negative-only float array (0 = not ocean).
-    Output: uint8 array with BATHY_SCALE_MAXDEPTH..BATHY_SCALE_SEALEVEL range.
+    Output: uint8 array with BATHY_SCALE_MAXDEPTH..TERRAIN_SEA_LEVEL_Y range.
     """
-    to_high = float(cfg.BATHY_SCALE_SEALEVEL)
+    to_high = float(cfg.TERRAIN_SEA_LEVEL_Y)
     to_low = float(cfg.BATHY_SCALE_MAXDEPTH)
+    if not 1 <= to_low < to_high < 255:
+        raise ValueError("BATHY_SCALE_MAXDEPTH must be between 1 and TERRAIN_SEA_LEVEL_Y")
+    if cfg.BATHY_USE_PIECEWISE_SCALE and not to_low <= cfg.BATHY_EXAGGERATE_MIDPOINT <= to_high:
+        raise ValueError("BATHY_EXAGGERATE_MIDPOINT must lie between ocean depth and sea level")
     arr = bathy_raw.astype(np.float64)
 
     if not cfg.BATHY_USE_PIECEWISE_SCALE:
@@ -218,7 +223,7 @@ def _encode_terrain_y(elevation_metres: np.ndarray, cfg, peak=None) -> np.ndarra
     return world_y.astype(np.uint8)
 
 def _rasterize_lakes(gpkg_path: Path, grid: MasterGrid, bounds: Bounds4326) -> np.ndarray:
-    """Rasterize lake polygons onto the master grid (1=lake, 0=no lake)."""
+    """Rasterize natural lake polygons onto the master grid (1=lake, 0=no lake)."""
     if not gpkg_path.exists():
         print("  Warning: crop_lakes.gpkg not found, lake mask will be empty.")
         return np.zeros((grid.height, grid.width), dtype=np.uint8)
@@ -228,7 +233,11 @@ def _rasterize_lakes(gpkg_path: Path, grid: MasterGrid, bounds: Bounds4326) -> n
 
     shapes = []
     with fiona.open(str(gpkg_path)) as src:
+        if "featurecla" not in src.schema["properties"]:
+            raise ValueError("Lake polygons are missing featurecla")
         for feat in src:
+            if not feat["geometry"] or not is_natural_lake(feat["properties"]):
+                continue
             geom = shape(feat["geometry"])
             # Buffer by ~20m equivalent (matches bash: ST_Buffer(geom, 20) in proj CRS)
             proj_geom = shp_transform(transformer.transform, geom)

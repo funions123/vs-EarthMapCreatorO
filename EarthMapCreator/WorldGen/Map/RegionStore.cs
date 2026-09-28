@@ -7,7 +7,7 @@ namespace EarthMapCreator;
 
 public enum MapPlane
 {
-    Height, LakeDepth, Bathymetry, Climate, Tree, River, RiverSurface,
+    Height, LakeDepth, Bathymetry, Tree, River, RiverSurface,
     RiverDepth, LakeMask, LandMask
 }
 
@@ -25,9 +25,9 @@ public sealed class MapRegion
 public sealed class RegionStore : IDisposable
 {
     private const int Size = 512;
-    private const int PlaneCount = 10;
+    private const int PlaneCount = 9;
     private const int RegionBytes = Size * Size * PlaneCount;
-    private const int HeaderBytes = 24;
+    private const int HeaderBytes = 28;
     private const int Capacity = 64; // 160 MiB of source map data
     private readonly SafeFileHandle file;
     private readonly int zRegions;
@@ -37,6 +37,12 @@ public sealed class RegionStore : IDisposable
 
     public int Width { get; }
     public int Height { get; }
+    public int SeaLevel { get; }
+    // The stored byte Y values describe a 256-high world. Stretch absolute
+    // positions at runtime; 0 remains 0 and the highest encoded Y becomes
+    // the highest block of the selected world height.
+    public static int WorldY(int encodedY, int mapSizeY) =>
+        (int)(((long)encodedY * (mapSizeY - 1) + 127) / 255);
 
     public RegionStore(string path)
     {
@@ -46,12 +52,14 @@ public sealed class RegionStore : IDisposable
             Span<byte> header = stackalloc byte[HeaderBytes];
             ReadFully(header, 0);
             if (!header[..8].SequenceEqual("EMREGION"u8) ||
-                BitConverter.ToInt32(header[8..12]) != 1 ||
+                BitConverter.ToInt32(header[8..12]) != 3 ||
                 BitConverter.ToInt32(header[20..24]) != Size)
                 throw new InvalidDataException("Unsupported Earth map region format");
             Width = BitConverter.ToInt32(header[12..16]);
             Height = BitConverter.ToInt32(header[16..20]);
+            SeaLevel = BitConverter.ToInt32(header[24..28]);
             if (Width <= 0 || Height <= 0 || Width % Size != 0 || Height % Size != 0 ||
+                SeaLevel <= 1 || SeaLevel >= 255 ||
                 RandomAccess.GetLength(file) != HeaderBytes + (long)Width / Size * (Height / Size) * RegionBytes)
                 throw new InvalidDataException($"Invalid Earth map dimensions or length: {Width}x{Height}");
             zRegions = Height / Size;

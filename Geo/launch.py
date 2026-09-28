@@ -66,7 +66,7 @@ def main():
     grid, bounds = get_master_grid(cfg, proj_crs)
 
     # --- Pipeline stages ---
-    from pipeline import land, topography, koppen, tree, translate
+    from pipeline import land, topography, tree, translate
 
     log("=== Stage: land ===")
     land.run(WORK_DIR, DATASETS_DIR, grid, bounds, cfg)
@@ -74,23 +74,20 @@ def main():
     log("=== Stage: topography ===")
     topography.run(WORK_DIR, DATASETS_DIR, grid, bounds, cfg)
 
-    # log("=== Stage: climate (WorldClim, disabled) ===")
-    # from pipeline import climate
-    # climate.run(WORK_DIR, DATASETS_DIR, grid, bounds, cfg)
-
-    log("=== Stage: koppen ===")
-    koppen.run(WORK_DIR, DATASETS_DIR, grid, bounds, cfg)
-
     log("=== Stage: tree ===")
     tree.run(WORK_DIR, DATASETS_DIR, grid, bounds, cfg)
 
     log("=== Stage: translate ===")
     translate.run(WORK_DIR, grid, bounds, cfg)
     from pipeline.region_store import bake
+    from pipeline.earth_climate import run as write_earth_climate
     log("=== Stage: region store ===")
-    bake(BUILD_DIR, cfg.FINAL_WIDTH, cfg.FINAL_LENGTH)
+    bake(BUILD_DIR, cfg.FINAL_WIDTH, cfg.FINAL_LENGTH,
+         cfg.TERRAIN_SEA_LEVEL_Y, cfg.BATHY_SCALE_MAXDEPTH)
+    log("=== Stage: Earth climate ===")
+    write_earth_climate(BUILD_DIR, DATASETS_DIR, grid, cfg)
 
-    log("=== Pipeline complete. PNGs and earthmap.regions in: " + str(BUILD_DIR) + " ===")
+    log("=== Pipeline complete. PNGs, earthmap.regions, earthclimate.bin in: " + str(BUILD_DIR) + " ===")
 
 
 if __name__ == "__main__":

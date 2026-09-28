@@ -2,9 +2,7 @@
 pipeline/land.py — land mask, rivers, lakes.
 Replaces land.sh (OSM land polygons + Natural Earth rivers + Natural Earth lakes).
 """
-import os
 import zipfile
-import glob
 from pathlib import Path
 
 import numpy as np
@@ -16,39 +14,25 @@ from pyproj import Transformer
 
 from util.projection import MasterGrid, Bounds4326
 from util.raster import rasterize_features, save_array, download_file
+from pipeline.lake_classification import is_natural_lake
 
 
-def _get_dataset(zip_name: str, datasets_dir: Path, url: str, dest: Path, cfg) -> Path:
-    """Copy or download a zip dataset. Returns path to the local zip."""
-    local = datasets_dir / zip_name
-    dest_zip = dest / zip_name
-
-    if cfg.GET_DATASETS_LOCALLY and local.exists():
-        import shutil
-        shutil.copy(local, dest_zip)
-        return dest_zip
-
-    if not dest_zip.exists():
-        max_tries = 5
-        for attempt in range(1, max_tries + 1):
-            try:
-                download_file(url, str(dest_zip), desc=zip_name)
-                break
-            except Exception as e:
-                print(f"  Download attempt {attempt}/{max_tries} failed: {e}")
-                if dest_zip.exists():
-                    dest_zip.unlink()
-                if attempt == max_tries:
-                    raise RuntimeError(f"Could not download {zip_name} after {max_tries} attempts")
-                import time
-                time.sleep(60)
-
-    if cfg.DOWNLOAD_DATASETS_LOCALLY and not local.exists():
-        import shutil
-        datasets_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy(dest_zip, local)
-
-    return dest_zip
+def _get_dataset(datasets_dir: Path, url: str) -> Path:
+    """Use the cached OSM archive, downloading it once if absent."""
+    archive = datasets_dir / "land-polygons-complete-4326.zip"
+    if archive.exists():
+        return archive
+    datasets_dir.mkdir(parents=True, exist_ok=True)
+    temporary = archive.with_suffix(".zip.tmp")
+    try:
+        download_file(url, str(temporary), desc=archive.name)
+        with zipfile.ZipFile(temporary) as source:
+            if not any(Path(name).name == "land_polygons.shp" for name in source.namelist()):
+                raise ValueError(f"Missing land_polygons.shp in {archive.name}")
+        temporary.replace(archive)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return archive
 
 
 def _find_file(directory: Path, pattern: str):
@@ -78,13 +62,7 @@ def run(work_dir: Path, datasets_dir: Path, grid: MasterGrid, bounds: Bounds4326
     # ------------------------------------------------------------------ #
     # 1. Land mask
     # ------------------------------------------------------------------ #
-    land_zip = _get_dataset(
-        "land-polygons-complete-4326.zip",
-        datasets_dir,
-        cfg.OSM_LANDPOLYGONS_URL,
-        osm_dir,
-        cfg,
-    )
+    land_zip = _get_dataset(datasets_dir, cfg.OSM_LANDPOLYGONS_URL)
 
     land_extract = osm_dir / "land_polygons_extracted"
     if not (land_extract / "land_polygons.shp").exists():
@@ -191,7 +169,7 @@ def _clip_lakes_to_gpkg(
     lon_min, lat_min, lon_max, lat_max,
     bbox_geom,
 ):
-    """Clip natural Natural Earth lakes to a GeoPackage, excluding reservoirs."""
+    """Clip natural lake polygons to a GeoPackage, excluding known reservoirs."""
     if Path(dst_path).exists():
         Path(dst_path).unlink()
 
@@ -208,7 +186,7 @@ def _clip_lakes_to_gpkg(
 
         with fiona.open(dst_path, "w", **meta) as dst:
             for feat in src:
-                if feat["properties"]["featurecla"] not in ("Lake", "Alkaline Lake"):
+                if not is_natural_lake(feat["properties"]):
                     continue
                 geom = shape(feat["geometry"])
                 clipped = geom.intersection(bbox_geom)

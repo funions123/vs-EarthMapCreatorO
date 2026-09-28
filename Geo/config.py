@@ -22,9 +22,9 @@ FORCE_FINAL_PROJ = None
 RESIZE_MAP = True
 
 # --- Terrain Elevation Encoding ---
-# Zero metres maps to Y=92. The highest positive elevation on the final map
-# maps to Y=255; negative elevations use the same scale below the sea datum.
-TERRAIN_SEA_LEVEL_Y = 92
+# Zero metres maps to this absolute game Y. All ocean and land surfaces share it.
+# The highest positive elevation on the final map maps to Y=255.
+TERRAIN_SEA_LEVEL_Y = 60
 # Natural Earth "Alkaline Lake" polygons are saline automatically. Add exact
 # "name" field values here for salt lakes labeled only as "Lake" in that data.
 # Unlisted "Lake" polygons remain freshwater; reservoirs remain excluded.
@@ -33,8 +33,7 @@ SALINE_LAKE_NAMES = []
 # --- Bathymetry Scaling ---
 ENABLE_BATHY_CUSTOM_SCALE = True
 
-# Vintage Story sea level byte value (0–255); default 92
-BATHY_SCALE_SEALEVEL = 92
+# Shallow ocean and coastline use TERRAIN_SEA_LEVEL_Y.
 
 # Vintage Story maximum ocean depth byte value (0–255); default 50
 BATHY_SCALE_MAXDEPTH = 50
@@ -45,14 +44,14 @@ BATHY_USE_PIECEWISE_SCALE = True
 # Raw elevation (negative metres) where the piecewise function switches
 BATHY_EXAGGERATE_THRESHOLD = -100
 
-# Output byte value at the threshold (must be between MAXDEPTH and SEALEVEL)
-BATHY_EXAGGERATE_MIDPOINT = 80
+# Output byte value at the deep/shallow threshold, between MAXDEPTH and sea level.
+BATHY_EXAGGERATE_MIDPOINT = 55
 
 # --- HydroRIVERS ---
 # Centerline widths grow with the square root of mean discharge (DIS_AV_CMS).
 # At the reference flow, the channel gains one output block over its minimum.
-RIVER_MIN_WIDTH_PIXELS = 2.0
-RIVER_WIDTH_REFERENCE_FLOW_CMS = 100.0
+RIVER_MIN_WIDTH_PIXELS = 3.0
+RIVER_WIDTH_REFERENCE_FLOW_CMS = 5.4
 RIVER_MAX_WIDTH_PIXELS = 8.0
 # Suppress reaches whose long-term mean flow is below 1 m³/s; a zero-flow
 # reach across Badwater Basin is mapped despite its large drainage area.
@@ -75,12 +74,5 @@ RIVER_MAX_DEPTH_BLOCKS = 3
 RIVER_BANK_WIDTH_BLOCKS = 3
 RIVER_BANK_SLOPE = 1
 
-# --- Dataset caching ---
-# Cache downloaded datasets in Geo/datasets/ for reuse across runs
-DOWNLOAD_DATASETS_LOCALLY = True
-FORCE_LOCAL_DATASETS_UPDATE = False
-GET_DATASETS_LOCALLY = True
-
 # --- Dataset URLs ---
 OSM_LANDPOLYGONS_URL = "https://osmdata.openstreetmap.de/download/land-polygons-complete-4326.zip"
-KOPPEN_URL = "https://ndownloader.figshare.com/files/61012822"  # Beck et al. (2023), corrected archive (2026)

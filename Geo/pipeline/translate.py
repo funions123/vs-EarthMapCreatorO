@@ -18,14 +18,14 @@ from pipeline.topography import _encode_terrain_y
 
 def run(work_dir: Path, grid: MasterGrid, bounds, cfg):
     """
-    Produces 10 aligned PNGs in work_dir/build/:
+    Produces 9 aligned PNGs in work_dir/build/:
       bathymetry_heightmap.png, heightmap.png, lake_mask.png, lake_depth.png,
-      river.png, river_surface.png, river_depth.png, landmask.png, climate.png,
-      tree.png
+      river.png, river_surface.png, river_depth.png, landmask.png, tree.png
     """
     build_dir = work_dir / "build"
     build_dir.mkdir(parents=True, exist_ok=True)
     (build_dir / "complete_topo.png").unlink(missing_ok=True)
+    (build_dir / "climate.png").unlink(missing_ok=True)
 
     out_w = cfg.FINAL_WIDTH if cfg.RESIZE_MAP else None
     out_h = cfg.FINAL_LENGTH if cfg.RESIZE_MAP else None
@@ -49,12 +49,7 @@ def run(work_dir: Path, grid: MasterGrid, bounds, cfg):
     write_lake_maps(work_dir, build_dir, grid, cfg)
     write_coastal_maps(build_dir, cfg)
 
-    # 6. Climate / Köppen RGB (3-band Byte)
-    koppen_rgb = work_dir / "koppen_climate_rgb.tif"
-    _tif_to_png(koppen_rgb, build_dir / "climate.png", out_w, out_h,
-                multiband=True, resample=Image.Resampling.NEAREST)
-
-    # 7. Tree (Byte)
+    # Tree (Byte)
     _tif_to_png(work_dir / "tree.tif", build_dir / "tree.png", out_w, out_h)
 
     # Local HydroRIVERS lines operate on the final grid after lakes establish precedence.

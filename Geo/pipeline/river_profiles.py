@@ -147,7 +147,7 @@ def fitted_river_surface(lines, transform, height, river, lake, land, fallback, 
 
     lake_near = minimum_filter(np.where(lake, height, 255).astype(np.uint8), size=3) < 255
     lake_levels = minimum_filter(np.where(lake, height, 255).astype(np.uint8), size=3)
-    ocean_near = minimum_filter(np.where(~land, 0, 255).astype(np.uint8), size=3) == 0
+    ocean_near = ~minimum_filter(land, size=3)
     parent = np.full(len(pixels), -1, np.int32)
     distance = np.full(len(pixels), np.inf)
     anchor = np.full(len(pixels), -1, np.int16)

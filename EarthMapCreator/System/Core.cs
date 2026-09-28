@@ -12,13 +12,25 @@ public class EarthMapCreator : ModSystem
 {
     public static Config config;
     public static RegionStore Layers;
+    public static EarthClimate ClimateData;
+    public static EarthClimate ClientClimateData;
+    private bool loadedServerMaps;
 
     public override void Start(ICoreAPI api)
     {
+        if (api.Side != EnumAppSide.Server) return;
         LoadConfig(api);
         LoadMapLayers(api);
+        loadedServerMaps = true;
+    }
 
-        TerraGenConfig.seaLevel = 92; //certain subroutines chimp out at certain times for below sea level stuff
+    public override void AssetsFinalize(ICoreAPI api)
+    {
+        if (api.Side != EnumAppSide.Server) return;
+        int seaLevel = RegionStore.WorldY(Layers.SeaLevel, ((ICoreServerAPI)api).WorldManager.MapSizeY);
+        ((ICoreServerAPI)api).WorldManager.SetSeaLevel(seaLevel);
+        TerraGenConfig.seaLevel = seaLevel;
+        Vintagestory.API.Common.Climate.Sealevel = seaLevel;
     }
 
     private void LoadConfig(ICoreAPI api) 
@@ -45,11 +57,14 @@ public class EarthMapCreator : ModSystem
         string folder = ResolveMapDirectory(api);
         Mod.Logger.Notification("Loading Earth map regions from {0}", folder);
         Layers = new RegionStore(Path.Combine(folder, "earthmap.regions"));
+        ClimateData = new EarthClimate(Path.Combine(folder, "earthclimate.bin"), Layers.Width, Layers.Height);
     }
 
     public override void Dispose()
     {
-        Layers?.Dispose();
+        if (!loadedServerMaps) return;
+        ClimateData = null;
+        Layers.Dispose();
         Layers = null;
     }
 

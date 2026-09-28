@@ -9,8 +9,10 @@
     "op": "replace",
     "path": "/blocklayers/0",
     "value": {
-      "name": "L1 Soil",
-      "id": "l1soil",
+      "name": "L1 Soil with grass",
+      "id": "l1soilwithgrass",
+      "minTemp": -10,
+      "minRain": 0.08,
       "blockCodeByMin": [
         { "minTemp": -4, "minRain": 0.33, "minFertility": 0.5, "blockCode": "soil-medium-normal" },
         { "minTemp": -7, "minRain": 0.19, "minFertility": 0.5, "blockCode": "soil-medium-sparse" },
@@ -19,12 +21,185 @@
         { "minTemp": -4, "minRain": 0.33, "minFertility": 0.25, "blockCode": "soil-low-normal" },
         { "minTemp": -7, "minRain": 0.2, "minFertility": 0.25, "blockCode": "soil-low-sparse" },
         { "minTemp": -10, "minRain": 0.19, "minFertility": 0.25, "blockCode": "soil-low-verysparse" },
+        { "minTemp": -4, "minRain": 0.15, "minFertility": 0.10, "blockCode": "soil-low-sparse" },
+        { "minTemp": -10, "minRain": 0.15, "minFertility": 0.10, "blockCode": "soil-low-verysparse" },
 
-        { "minTemp": -15, "maxTemp": -15, "maxRain": 0.20, "minRain": 0.15, "maxFertility": 0.25, "blockCode": "gravel-{rocktype}" },
-        { "minTemp": 21, "maxRain": 0.1, "maxFertility": 0.25, "blockCode": "sand-{rocktype}" },
-
-        { "minFertility": 0.25, "maxY": 0.51, "blockCode": "soil-verylow-verysparse" }
+        { "minTemp": 21, "blockCode": "sand-{rocktype}" },
+        { "minTemp": -10, "blockCode": "gravel-{rocktype}" }
       ]
+    },
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "replace",
+    "path": "/blocklayers/3/maxRain",
+    "value": 0.15,
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "replace",
+    "path": "/blocklayers/7/maxRain",
+    "value": 0.15,
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "replace",
+    "path": "/blocklayers/8/maxRain",
+    "value": 0.15,
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "replace",
+    "path": "/blocklayers/9/maxRain",
+    "value": 0.15,
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "replace",
+    "path": "/blocklayers/4/minFertility",
+    "value": 0.10,
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "replace",
+    "path": "/blocklayers/5/minFertility",
+    "value": 0.10,
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "replace",
+    "path": "/blocklayers/6/minFertility",
+    "value": 0.10,
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "replace",
+    "path": "/blocklayers/4/blockCodeByMin/1/minFertility",
+    "value": 0.10,
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "replace",
+    "path": "/blocklayers/5/blockCodeByMin/1/minFertility",
+    "value": 0.10,
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "replace",
+    "path": "/blocklayers/6/blockCodeByMin/1/minFertility",
+    "value": 0.10,
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "replace",
+    "path": "/blocklayers/4/blockCodeByMin/1/minRain",
+    "value": 0.15,
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "replace",
+    "path": "/blocklayers/5/blockCodeByMin/1/minRain",
+    "value": 0.15,
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "replace",
+    "path": "/blocklayers/6/blockCodeByMin/1/minRain",
+    "value": 0.15,
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "replace",
+    "path": "/tallgrass/blockCodeByMin/5/minRain",
+    "value": 0.15,
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "remove",
+    "path": "/blocklayers/16",
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "remove",
+    "path": "/blocklayers/9",
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "add",
+    "path": "/blocklayers/0",
+    "value": {
+      "name": "Cold climate gravel",
+      "id": "coldclimategravel",
+      "blockCode": "gravel-{rocktype}",
+      "minTemp": -15,
+      "maxTemp": 10,
+      "maxRain": 0
+    },
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "remove",
+    "path": "/blocklayers/12",
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "remove",
+    "path": "/blocklayers/11",
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "remove",
+    "path": "/blocklayers/13",
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "remove",
+    "path": "/blocklayers/12",
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "remove",
+    "path": "/blocklayers/11",
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "remove",
+    "path": "/blocklayers/10",
+    "file": "game:worldgen/blocklayers.json",
+    "side": "Server"
+  },
+  {
+    "op": "replace",
+    "path": "/blocklayers/3",
+    "value": {
+      "name": "Frozen gravel",
+      "id": "frozengravel",
+      "blockCode": "gravel-{rocktype}",
+      "minTemp": -30,
+      "maxTemp": -16
     },
     "file": "game:worldgen/blocklayers.json",
     "side": "Server"

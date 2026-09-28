@@ -6,8 +6,8 @@
     <ModVersion>0.9.0</ModVersion>
     <ModId>earthmapcreatoro</ModId>
     <Description>Generate real-Earth maps for Vintage Story.</Description>
-    <Side>server</Side>
-    <RequiredOnClient>false</RequiredOnClient>
+    <Side>universal</Side>
+    <RequiredOnClient>true</RequiredOnClient>
     <RequiredOnServer>true</RequiredOnServer>
   </PropertyGroup>
 
@@ -67,6 +67,10 @@
       <HintPath>$(GameDirectory)/Lib/0Harmony.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="protobuf-net">
+      <HintPath>$(GameDirectory)/Lib/protobuf-net.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Content Include="modicon.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="assets/**/*" CopyToOutputDirectory="PreserveNewest" />
     <RuntimeHostConfigurationOption Include="System.Drawing.EnableUnixSupport" Value="true" />
@@ -107,6 +111,8 @@
   <Target Name="StageEarthMapForDebug" AfterTargets="GenerateModInfo" Condition="'$(Configuration)' == 'Debug'">
     <Error Condition="!Exists('$(EarthMapPipelineDir)/earthmap.regions')"
            Text="Missing earthmap.regions. Run Geo/launch.py before debugging." />
+    <Error Condition="!Exists('$(EarthMapPipelineDir)/earthclimate.bin')"
+           Text="Missing earthclimate.bin. Place a matching EMCL climate file beside earthmap.regions before debugging." />
     <WriteLinesToFile File="$(TargetDir)earthmap-debug-path.txt"
                       Lines="$([System.IO.Path]::GetFullPath('$(EarthMapPipelineDir)'))"
                       Overwrite="true" />

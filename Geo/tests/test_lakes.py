@@ -14,8 +14,8 @@ from shapely.geometry import box, mapping
 from shapely.ops import transform as project
 
 from pipeline.land import _clip_lakes_to_gpkg
-from pipeline.lakes import FRESH_LAKE, SALINE_LAKE, build_lake_maps, SEA_LEVEL
-from pipeline.topography import _encode_terrain_y
+from pipeline.lakes import FRESH_LAKE, SALINE_LAKE, build_lake_maps
+from pipeline.topography import _encode_terrain_y, _rasterize_lakes
 from pipeline.translate import _write_heightmap
 from util.projection import MasterGrid
 
@@ -71,7 +71,6 @@ class LakeMapsTests(unittest.TestCase):
         self.assertGreater(int(height[4, 10]), int(height[0, 10]))
         self.assertEqual(int(mask[5, 10]), 0)
         self.assertEqual(int(height[0, 10]), 20)
-        self.assertLess(int(height[6, 10]), SEA_LEVEL)
 
     def test_signed_elevations_scale_peak_without_clipping_midrange(self):
         class Config:
@@ -125,34 +124,55 @@ class LakeMapsTests(unittest.TestCase):
         self.assertEqual(int(mask[3, 16]), SALINE_LAKE)
         self.assertTrue(np.all(depth[mask > 0] > 0))
 
-    def test_reservoir_polygons_are_excluded_before_lake_rasterization(self):
+    def test_mislabeled_osm_reservoir_is_excluded_from_both_rasterizers(self):
         source = Path(self.temp.name) / "lakes.shp"
         polygons = [
-            ("Lake", box(2, 2, 5, 5)),
-            ("Reservoir", box(13, 13, 16, 16)),
-            ("Alkaline Lake", box(24, 24, 27, 27)),
+            ("Lake", "Natural Lake", "Q100", box(2, 2, 5, 5)),
+            ("Lake", "Lake Havasu", "Q451522", box(13, 13, 16, 16)),
+            ("Alkaline Lake", "Salt Lake", "Q200", box(24, 24, 27, 27)),
         ]
+        schema = {"geometry": "Polygon", "properties": {
+            "featurecla": "str:32", "name": "str:80", "wikidataid": "str:16"}}
         with fiona.open(source, "w", driver="ESRI Shapefile", crs="EPSG:4326",
-                        schema={"geometry": "Polygon", "properties": {"featurecla": "str:32"}}) as dst:
-            for category, polygon in polygons:
+                        schema=schema) as dst:
+            for category, name, wikidata, polygon in polygons:
                 wgs84 = project(lambda x, y, z=None: (x * 1000 / 111319.49,
                                                       y * 1000 / 111319.49), polygon)
-                dst.write({"geometry": mapping(wgs84), "properties": {"featurecla": category}})
+                dst.write({"geometry": mapping(wgs84), "properties": {
+                    "featurecla": category, "name": name, "wikidataid": wikidata}})
 
         _clip_lakes_to_gpkg(str(source), str(self.gpkg), 0, 0, 0.3, 0.3,
                             box(0, 0, 0.3, 0.3))
         with fiona.open(self.gpkg) as cropped:
-            self.assertEqual({feat["properties"]["featurecla"] for feat in cropped},
-                             {"Lake", "Alkaline Lake"})
+            self.assertEqual({feat["properties"]["name"] for feat in cropped},
+                             {"Natural Lake", "Salt Lake"})
+
         grid = MasterGrid(Affine(1000, 0, 0, 0, -1000, 30000),
                           30, 30, CRS.from_epsg(3857))
         height = np.full((30, 30), 100, dtype=np.uint8)
         land = np.full_like(height, 255)
+        topography = _rasterize_lakes(self.gpkg, grid, (0, 0, 0.3, 0.3))
         mask, depth = build_lake_maps(self.gpkg, grid, height, land)
+        self.assertEqual(int(topography[26, 3]), 1)
         self.assertEqual(int(mask[26, 3]), FRESH_LAKE)
+        self.assertEqual(int(topography[4, 25]), 1)
         self.assertEqual(int(mask[4, 25]), SALINE_LAKE)
+        self.assertEqual(int(topography[15, 14]), 0)
         self.assertEqual(int(mask[15, 14]), 0)
         self.assertEqual(int(depth[15, 14]), 0)
+
+    def test_stale_staged_reservoir_is_defensively_excluded(self):
+        height = np.full((20, 20), 100, dtype=np.uint8)
+        mask, depth, _ = self.maps(
+            [box(2, 2, 5, 5), box(13, 13, 16, 16)], height,
+            classes=["Lake", "Lake"], names=["Natural Lake", "Lake Havasu"])
+        topography = _rasterize_lakes(self.gpkg, self.grid, (0, 0, 0.2, 0.2))
+
+        self.assertEqual(int(topography[17, 3]), 1)
+        self.assertEqual(int(mask[17, 3]), FRESH_LAKE)
+        self.assertEqual(int(topography[5, 14]), 0)
+        self.assertEqual(int(mask[5, 14]), 0)
+        self.assertEqual(int(depth[5, 14]), 0)
 
     def test_touching_polygons_share_one_waterline(self):
         height = np.full((20, 20), 80, dtype=np.uint8)
