@@ -143,5 +143,9 @@
     <MakeDir Directories="$(ReleaseDirectory)" />
     <Delete Files="$(ReleaseZip)" />
     <ZipDirectory SourceDirectory="$(PackageStage)" DestinationFile="$(ReleaseZip)" />
+    <Exec Condition="'$(OS)' == 'Windows_NT'"
+          Command="python &quot;$(MSBuildProjectDirectory)/../package_geo.py&quot;" />
+    <Exec Condition="'$(OS)' != 'Windows_NT'"
+          Command="python3 &quot;$(MSBuildProjectDirectory)/../package_geo.py&quot;" />
   </Target>
 </Project>

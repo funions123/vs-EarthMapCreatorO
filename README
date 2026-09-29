@@ -1,441 +1,62 @@
 EarthMapCreatorO
-============================
-Generate real-Earth maps for Vintage Story.
+================
+Generate a real-Earth map for Vintage Story.
 
-Original code by tlm9201. Heavily modified and improved, and the bash script image processing pipeline was rewritten in python for windows+linux compat and ease of use.
-Not a fork because its functionally impossible to pull from upstream (due to the extent of rewrite) and the merge conflicts got annoying.
+What you need
+-------------
+- Vintage Story 1.22.7 and the matching `earthmapcreatoro_<version>.zip` mod.
+- To make your own map: `earthmapcreatoro_geo_<version>.zip`, Python 3 and pip.
+  Install the mod on both the server and every connecting client. In single-player,
+  install it in your usual Vintage Story Mods folder.
 
-https://github.com/tlm9201/vs-earth-map-creator
+Generate a map
+--------------
+1. Extract the Geo ZIP. From the extracted `Geo/` directory, install the Python
+   dependencies:
 
-Requirements
--------------------
-- Visual Studio 2022 with .NET 10 SDK (or `dotnet` CLI)
-- Vintage Story 1.22.7 or a compatible .NET 10 game installation
-- Python 3 and packages in Geo/requirements.txt for map generation
-- ImageMagick (optional; river post-processing falls back to Pillow)
+       python -m pip install -r requirements.txt
 
-Visual Studio build
--------------------
-Open EarthMapCreatorO.sln and build the EarthMapCreator project. Set VINTAGE_STORY
-to the game installation directory, or copy
-EarthMapCreator/Properties/localSettings.props.example to localSettings.props and
-set GameDirectory and DataFolder there. That local file is not committed.
-Debug builds appear under EarthMapCreator/bin/Debug/Mods/earthmapcreatoro/.
-Release builds create `Releases/earthmapcreatoro_<version>.zip`. Mod metadata is
-generated into the build output from the properties at the top of
-`EarthMapCreator.csproj`; update `<ModVersion>` there to bump the version.
-The Client and Server profiles use the normal Vintage Story data folder, preserving
-credentials, saves, and mod configuration. Run the Geo pipeline first; Debug
-builds read `earthmap.regions` directly from `Geo/work/build/` without copying
-the multi-gigabyte artifact. Release builds use the normal Vintage Story
-`EarthMap` folder.
+   On Linux, use `python3` instead of `python` if needed.
 
-Release builds embed path-mapped symbols for useful crash-log line numbers.
-Paths to this repository are replaced with /_/EarthMapCreator; SourceLink is
-disabled, and standalone PDBs are excluded from the ZIP. Check compiled release
-artifacts for machine paths before sharing them.
+2. Place these inputs in `Geo/datasets/` (create the directory if needed):
+   - `ds75_grd.zip` — [GMTED elevation](https://edcintl.cr.usgs.gov/downloads/sciweb1/shared/topo/downloads/GMTED/Grid_ZipFiles/ds75_grd.zip).
+   - `gebco_2025_sub_ice_topo.zip` — [GEBCO bathymetry](https://www.gebco.net/data_and_products/gridded_bathymetry_data/). An extracted GEBCO `.nc` file in `Geo/datasets/` also works.
+   - `ne_10m_lakes.zip` — [Natural Earth lakes](https://www.naturalearthdata.com/downloads/10m-physical-vectors/).
+   - `HydroRIVERS_v10_na_shp/` — extract the [North/Central America HydroRIVERS shapefile](https://www.hydrosheds.org/products/hydrorivers) here; keep its `.shp`, `.shx`, `.dbf`, and `.prj` files together.
 
-Directories
--------------------
-.
-├── EarthMapCreator   - Visual Studio mod project
-└── Geo               - independent geospatial processing scripts
+   Other required data downloads automatically on the first run. Allow substantial
+   free disk space and time; the climate download alone is about 11 GB.
 
-Python Pipeline (Geo/)
--------------------
-The pipeline downloads some datasets automatically, but several large files must be
-placed manually in Geo/datasets/ before running:
+3. Edit `Geo/config.py` for your desired latitude/longitude bounds and
+   `FINAL_WIDTH`/`FINAL_LENGTH`. Choose dimensions in multiples of 512 blocks,
+   and create a Vintage Story world with the same width and length. The default
+   configuration targets a 25,600 × 25,600-block world in western/central North America.
 
-  ds75_grd.zip              GMTED 250m DEM (topography)
-                            https://edcintl.cr.usgs.gov/downloads/sciweb1/shared/topo/downloads/GMTED/Grid_ZipFiles/ds75_grd.zip
+4. From the `Geo/` directory, run:
 
-  gebco_2025_sub_ice_topo.zip  GEBCO bathymetry (or extract the .nc and place it directly)
-                            https://www.gebco.net/data_and_products/gridded_bathymetry_data/
-
-
-  ne_10m_lakes.zip          Natural Earth lakes + reservoirs (the pipeline filters reservoirs)
-                            https://www.naturalearthdata.com/downloads/10m-physical-vectors/
-
-
-  HydroRIVERS_v10_na_shp/  Extract the North/Central America HydroRIVERS
-                            shapefile here, including .shp, .shx, .dbf, .prj:
-                            https://www.hydrosheds.org/products/hydrorivers
-
-The following are downloaded automatically on first run and cached:
-  - OSM land polygons
-  - CHELSA V2.1 1981–2010 monthly climatologies at 30 arc-seconds (~1 km):
-    12 TIFFs each for `tas`, `pr`, and `pet` (36 files, roughly 11 GB total).
-    Cached as `CHELSA_{variable}_{MM}_1981-2010_V.2.1.tif` in `Geo/datasets/`.
-    Source: https://chelsa-climate.org/datasets/chelsa_climatologies
-    Files: https://os.unil.cloud.switch.ch/chelsa02/chelsa/global/climatologies/
-  - Hengl et al. (2018) predicted potential natural vegetation classes at ~1 km:
-    `pnv_biome.type_biome00k_c_1km_s0..0cm_2000..2017_v0.1.tif`.
-    Dataset: https://doi.org/10.7910/DVN/QQHCIK (map data: ODbL 1.0;
-    check redistribution and share-alike obligations for baked derivatives).
-
-
-
-Once datasets are in place:
-
-  0. The python scripts work on Windows or Linux, but you must have python and pip installed.
-
-  1. Install Python dependencies:
-       cd Geo/
-       pip install -r requirements.txt
-
-  2. Edit Geo/config.py to set your bounding box (LAT_MIN/MAX, LON_MIN/MAX),
-     output resolution (FINAL_WIDTH, FINAL_LENGTH — must be multiples of 512),
-     and projection. You can use sites such as https://boundingbox.klokantech.com/
-	 to find a bounding box for the desired map.
-
-  3. Run the pipeline:
        python launch.py
 
-  4. Nine PNGs for inspection, `earthmap.regions` (EMREGION v4), and
-     `earthclimate.bin` for the mod are written to Geo/work/build/.
+   Wait for `=== Pipeline complete ===`. The files to install are
+   `Geo/work/build/earthmap.regions` and `Geo/work/build/earthclimate.bin`.
+   The PNGs in that directory are for previewing your map.
 
-The climate stage samples CHELSA V2.1 1981–2010 monthly temperature (`tas`,
-scaled kelvin), precipitation (`pr`) and Penman–Monteith potential
-evapotranspiration (`pet`) every 8 blocks on the final output grid.
-Precipitation and PET are in kg/m²/month (numerically mm/month); the twelve
-monthly totals are summed for each annual value. TIFF scale, offset, and
-NoData metadata are honored. EMCL v2 contains a 24-byte little-endian header
-(`EMCL`, version 2, width, height, spacing, float32 lapse), followed by
-Z-major samples of twelve signed temperatures (tenths of °C), annual
-precipitation and annual PET (unsigned millimetres), and the mean terrain Y of
-the sample's 8×8 cell (unsigned tenths of a source block; ocean counts as sea
-level). The climate stage reads the final `heightmap.png`, `landmask.png` and
-`lake_mask.png`, and fits the lapse (°C per source block) from local CHELSA
-temperature/terrain differences.
-Sea samples use the nearest available coastal CHELSA value. Dimensions must
-match `earthmap.regions`; missing, mismatched, EMCL v1 or older 32-block
-climate files are rejected at startup. At 25,600×25,600 blocks the 8-block
-file is 307.2 MB on the server. Rebuild `earthclimate.bin` when upgrading;
-`earthmap.regions` need not change for this climate-only cutover.
-Clients do not need either map file locally. The server streams compressed
-512-block climate tiles around loaded client regions; each tile includes an
-8-block sample halo for interpolation. Tiles outside that area are released
-when regions unload. Climate-dependent client overlays fall back to vanilla
-until the relevant tile arrives. The full 307.2 MB file remains server-side.
+Play the map
+------------
+1. Close the game or server before replacing an existing map. Copy **both**
+   generated files to the server's Vintage Story data directory:
 
-Runtime temperature at a block adds `lapse × (block Y − cell terrain Y)`, with
-block Y converted to source Y for taller worlds. CHELSA describes air at the
-smoothed terrain, so summits are colder than their cell and valleys warmer.
-Vintage Story's snow simulation normally samples each 512-block region at
-sea level and world top, turns those temperatures into melt/snowfall rates,
-then interpolates the *rates* to the ground. With CHELSA's terrain-relative
-lapse, the sea-level sample can be warm while elevated ground is freezing;
-interpolating those rates can cancel snowfall even at precipitation override 1.
-The mod samples the same hourly climate at the CHELSA cell's terrain elevation
-for both vertical snow-snapshot corners instead. Vanilla still controls hourly
-temperature variation, precipitation, snow-layer ticks and saved snow state.
-`/weather setprecip 1` changes rainfall but does not advance game hours or
-immediately rescan chunks; use `/debug snowaccum info` and
-`/debug snowaccum processhere` to inspect or request a local update.
+       Windows: %APPDATA%\VintagestoryData\EarthMap\
+       Linux:   ~/.config/VintagestoryData/EarthMap/
 
-On server startup the mod reapplies the region file's sea-level datum during
-asset finalization, after vanilla terrain setup (which otherwise resets it to
-110 in a 256-high world). This keeps runtime weather and the map terrain on
-the same datum. Vanilla `GenSnowLayer` otherwise cools the projected CHELSA
-climate map a second time by altitude and places snow in locations warmer than
-its runtime melting threshold; the snow placement hook uses CHELSA's surface
-temperature without that second adjustment. Existing snow placed in already
-generated chunks is not rebuilt by this change; newly generated chunks use it.
+   In single-player, your game is the server. Multiplayer clients need the mod,
+   but do not need copies of these map files.
 
-Worldgen ground cover and forest/shrub density are selected from Hengl's
-potential natural vegetation (PNV) biome classes, tempered by CHELSA annual
-temperature, warmest-month temperature and P/PET wetness. The PNV map represents
-vegetation without human land use, **not** observed present-day canopy or soil.
-Vanilla still chooses tree and shrub species using the projected climate map.
-Both server and client use the monthly temperature curve. The server retains
-the full climate file and sends only climate tiles around regions loaded by
-each client; a 512-block region needs a 65×65 sample tile with a one-sample
-edge halo for seamless interpolation. Clients need the mod but no local map
-files. Server generation keeps independent climate data in integrated play.
-Until a client's tile arrives, its temperature accessors use vanilla behavior.
-Weather precipitation noise and weather-event selection use annual P via `P/(P+800)`,
-a provisional normalization rather than measured rain frequency. Weather
-patterns may continue to use vegetation wetness.
+2. Install `earthmapcreatoro_<version>.zip` in the Vintage Story Mods folder,
+   then start a new world with the dimensions you selected in `Geo/config.py`.
+   Keep the world within the generated map area; outside it, terrain is not
+   generated. If you change the map later, previously generated chunks do not
+   update automatically—use a new world or regenerate those chunks.
 
-Vanilla worldgen applies a sea-level temperature lapse to packed climate
-bytes. CHELSA's packed values already describe local terrain, so the mod
-removes that second cooling for tree and shrub selection, structure placement,
-climate-limited deposits, creatures, ponds, schematic block layers, snow and
-surface patches. Server and client climate accessors instead expose the EMCL
-annual temperature plus its cell-relative lapse at the requested Y; the
-monthly callback still supplies seasonal, diurnal and weather variation.
-Client block and world colormaps use the same terrain-referenced temperature
-while retaining vanilla precipitation and season coloring. Vintage Story's
-grass/foliage shader normally adds altitude back to its seasonal tint weight,
-assuming a sea-level temperature byte. The mod tags climate-tiled mesh colors
-and skips that reversal: on elevated terrain it otherwise removes the green
-summer overlay and leaves the brown annual climate tint. Areas without a
-client climate tile initially use vanilla tint behavior; at high elevations
-their pre-tile meshes may even appear frosted in warm weather because the
-shader combines the old cold mesh byte with the new seasonal temperature.
-When the tile arrives, the client retessellates loaded chunks in that region
-so foliage and grass get their CHELSA temperature and lose false frost.
-Already generated terrain is not rewritten.
-This fixes shader frost from stale mesh climate bytes, not snow-covered blocks
-or layers saved by the weather simulation; those melt through normal snow
-updates.
-
-`Geo/work/build/vegetation.png` replaces the measured canopy image in the
-nine-plane region store. The categorical byte contains Hengl biome IDs
-(1–4, 7–9, 13–20, 22, 27–28, 30–32). PNV NoData land cells copy the
-nearest classified PNV cell in the master raster before the final categorical
-resize. The final grid feathers biome boundaries over at most four blocks by
-sampling neighboring **class labels** with stable coordinate-based jitter;
-numeric biome IDs are never averaged, and class interiors stay unchanged.
-Final lake and coastal water remains zero. Large unclassified source areas
-inherit a neighboring class rather than independent ecological evidence.
-The same potential-vegetation profile feeds forest and shrub density, grass,
-soil depth and soil-fertility classes. Sufficiently dense PNV forests use
-vanilla forest-floor stages above soil rather than ordinary grassy soil.
-Medium/high-fertility surface soil is at least very sparsely covered when warm
-enough for grass; exposed mineral still occurs on steep or naturally bare
-patches. Steppe can retain medium-fertility soil even in dry climates.
-Trees do not generate where CHELSA's warmest monthly mean is below 10 °C,
-even if PNV labels the site as forest. The forest density and actual tree
-placement both enforce this cutoff; shrubs and grass retain their own
-temperature response. This can make high alpine sites treeless without
-forcing permanent snow.
-Dry scrub/desert may expose gravel or locally sand, while steep terrain loses
-soil and mapped riverbanks accumulate it. Lakes and ocean beds retain their
-separate vanilla material selection. Permanent snow uses the configured
-`SnowpackWarmestMonthTemperature` (default 5 °C); climate still governs weather
-and seasons. Fertility and depth are inferred worldgen estimates, not soil
-measurements. Regenerate existing chunks to change their surfaces.
-
-Newly generated terrain receives a thin `snowlayer-1` on solid exposed
-surfaces only when the current in-game temperature at that column is at or
-below freezing. This includes mountains in cold months but does not put
-snow on warm August summits merely because their annual climate is cold.
-New snow layers also initialize Vintage Story's per-column snow-accumulation
-value. Without this, the first chunk snow scan treats a one-layer block as
-less than its retention threshold and immediately removes it, even in freezing
-weather. Normal weather simulation subsequently accumulates or melts the
-layers; permanent snowpack remains a separate warmest-month decision.
-
-Vanilla surface block patches also read the packed climate map. Their
-temperature check must not apply a second altitude correction to CHELSA's
-terrain-level temperatures: doing so made mild elevated steppe too cold for
-vanilla's loose-stone patches (minimum -2 °C). The patched check preserves
-each patch's configured temperature and moisture limits. Flint surface pieces
-remain tied to vanilla flint deposits in sandstone, shale, claystone, chalk,
-or limestone; the change does not generate flint over other rock types.
-Already generated chunks keep their existing surface blocks.
-
-EMREGION v4 retains the nine-plane layout and sea-level Y header from v3,
-but replaces its tree-canopy byte with the PNV class at plane index 3.
-Older files are rejected; rebuild `earthmap.regions` before starting the mod.
-Stop any game/server using the existing region file before running the pipeline
-so Windows can replace it. A new map affects newly generated chunks only;
-regenerate existing chunks to update their terrain and vegetation.
-
-Natural Earth supplies the lake polygons. Records classified as `Lake` or
-`Alkaline Lake` are candidates; `Reservoir` records are excluded. Natural
-Earth 5.0.0 nevertheless labels several reservoirs as `Lake`, including Lake
-Havasu. The pipeline therefore also excludes the current-map features that
-OpenStreetMap classifies as `water=reservoir`, using a reviewed correction list
-keyed by stable Natural Earth Wikidata ID where available and exact name
-otherwise; regeneration does not query OSM. This is not a complete global
-reservoir classifier: Natural Earth and OSM classifications can be incomplete
-or change between dataset releases.
-The selection is enforced while creating `crop_lakes.gpkg`, again when lakes
-select GMTED rather than GEBCO topography, and again during final-grid lake
-rasterization so stale staged files cannot reintroduce a reservoir. Natural
-`Alkaline Lake` records remain included.
-
-Lake shorelines are computed on the final output grid. The pipeline rasterizes
-each connected lake to one waterline, derives a 1-12 block tapered depth, and
-grades the surrounding bank over six blocks. `lake_mask.png` and the
-region-store lake plane encode 0 = no lake, 255 = freshwater (`Lake`), and
-128 = saltwater (`Alkaline Lake`, including the Salton Sea and Great Salt
-Lake). For salt lakes classified only as `Lake`, add their exact Natural Earth
-`name` values to `SALINE_LAKE_NAMES` in `Geo/config.py`. The empty default
-keeps unlisted lakes freshwater; the list changes water type but does not add
-missing polygons. Matching names apply to every polygon with that name. A
-connected lake containing both types uses saltwater throughout. The game uses
-saltwater blocks for value 128; all other lake values remain freshwater.
-`lake_depth.png` stores depth in blocks. `heightmap.png`, `landmask.png`, and
-both lake files share one final-grid footprint. `complete_topo.png` is
-obsolete. Rerun `python launch.py` from `Geo/` after changing lake selection;
-it recreates `work/crop_lakes.gpkg`, all final PNGs, `earthmap.regions`, and
-`earthclimate.bin`. Previously generated maps retain their old polygons and
-lake types.
-
-Final-grid coastal correction follows lake rasterization and precedes river
-fitting. Ocean pixels with missing or invalidly low encoded bathymetry (below
-`BATHY_SCALE_MAXDEPTH`) are replaced with one-block-deep ocean: a bed at
-sea level minus one and water at sea level. Dry land below sea level within
-16 blocks of existing ocean is converted to the same shallow ocean by
-clearing its land mask. Valid neighboring depths are not smoothed. Lake
-surfaces and inland below-sea-level basins are left alone. Rebuild PNGs and
-`earthmap.regions` to apply this correction; existing game chunks must also
-be regenerated.
-
-Rivers use the local HydroRIVERS North/Central America centerline dataset.
-`RIVER_MIN_UPSTREAM_AREA_SQKM` in `Geo/config.py` selects reaches by upstream
-drainage area (`UPLAND_SKM`); the default is 1,000 km² at 25,600 blocks per
-axis. With `RIVER_AUTO_SCALE_UPSTREAM_AREA = True` (the default), the effective
-threshold is multiplied by `max(1, 25600 / min(output width, output height))`.
-A 12,800 × 12,800 map of the same region therefore uses 2,000 km²; a
-10,240 × 10,240 map uses 2,500 km². Non-square maps use their shorter axis;
-larger maps do not lower the configured threshold. Set the option to `False`
-to hold the threshold fixed regardless of output dimensions.
-The default full-size threshold selects roughly 30,000 reaches before the
-mean-flow cutoff. `RIVER_MIN_FLOW_CMS` then excludes reaches whose long-term
-mean discharge (`DIS_AV_CMS`) is below 1 m³/s, including the mapped zero-flow
-channel through Badwater Basin. This removes many dry channels, but annual
-mean flow does not identify seasonal rivers; some intermittent reaches can
-remain and some small perennial reaches can be excluded. Tune both thresholds
-in `Geo/config.py`. Selected reaches are clipped to the map extent and
-simplified at half a final pixel before rasterization and
-waterline fitting. Channel width uses a square-root curve: at
-`RIVER_WIDTH_REFERENCE_FLOW_CMS` (5.4 m³/s), it gains one output block over the
-`RIVER_MIN_WIDTH_PIXELS` minimum (3), capped by `RIVER_MAX_WIDTH_PIXELS` (8).
-HydroRIVERS reports roughly 21.6 m³/s near Dodge City, Kansas; this gives
-the Arkansas River a nominal five-block width there. Rasterized widths vary
-by cross-section orientation and at joins. Cells are selected by their centers
-so touching edges do not add a ninth column at the cap. These settings control
-visual width, not a measured hydraulic width. HydroRIVERS has no mapped
-riverbank polygons. Terminal reaches with at least 10,000 km² upstream area
-can cross up to 30 km of continuous sea-level land to the nearest ocean cell.
-This approximates pre-diversion flow in dry deltas (including the Colorado),
-not a historically surveyed channel: a ridge or lake blocks the connection.
-Tune `RIVER_COASTAL_CONNECTION_*` in `Geo/config.py` to change those limits.
-Other centerlines drain toward lakes, coasts, or map edges.
-An isotonic fit joins tributaries to shared levels. The HydroRIVERS
-source-to-`NEXT_DOWN` order is retained through final raster fitting, so
-downstream water never climbs a mapped reach even where the DEM rises.
-River water is limited to adjacent dry-bank height; narrow high-water
-crests and isolated low-water pockets at bends are carved across the
-channel without raising banks or water. Every water column assigned to a
-centerline sample shares its lowest cross-section level, while distinct
-downstream samples retain discrete drops. Banks touching multiple water
-levels grade from the highest adjacent column; natural low banks are never
-raised.
-Quantization permits flat stretches where the real gradient is below
-one block. `river.png` is binary; `river_surface.png` stores absolute
-water Y and `river_depth.png` stores 1–3 block depths. Rebuild all maps after
-changing projection, bounds, scale, or river selection/width/depth settings in
-`Geo/config.py`.
-
-River proximity affects the PNV surface profile: soil-bearing dry land within
-four blocks of a mapped channel gains depth and at least medium fertility;
-its cover still follows the base biome: a dry scrub or desert bank can have
-very sparse grass on medium soil; wetter grassland remains denser, and forest
-keeps forest floor. Water columns remain underwater beds. Regenerate existing
-chunks to apply this change.
-
-The pipeline reads an extracted dataset from `Geo/datasets/`, or from
-`~/Downloads/HydroRIVERS_v10_na_shp/` if it is already extracted there.
-Only the final `=== Pipeline complete ===` message means all maps rebuilt.
-The Salton Sea is an `Alkaline Lake` in Natural Earth and remains saline in
-the final lake mask. Updating PNGs or `earthmap.regions` does
-not change already generated game chunks. Restart the server with the new
-region file and generate new terrain (or regenerate affected chunks) to
-see a changed lake or river in an existing world.
-
-
-The current `Geo/config.py` preset covers 30.59–49.00 N, 120.00–94.04 W
-in Web Mercator, with a 25,600 × 25,600 block output (Vintage Story's
-"25k blocks" preset). Terrain pixels store absolute Vintage Story Y:
-zero metres and the ocean surface use `TERRAIN_SEA_LEVEL_Y` (currently 60),
-and the highest valid elevation on the final output grid maps to Y=255. All
-other elevations use the same linear metres-to-block scale, including terrain
-below sea level. Bathymetry uses the same sea datum; its separate
-`BATHY_SCALE_MAXDEPTH` (currently 50) is the deepest ocean-bed Y, while
-`BATHY_EXAGGERATE_MIDPOINT` (currently 55) must lie between it and sea level.
-The v4 region header carries the source sea level to the mod. On 256-high
-worlds source Y is unchanged; on 384- and 512-high worlds, the mod linearly
-maps absolute Y by `round(sourceY × (worldHeight - 1) / 255)`. The ocean
-surface, terrain, ocean bed, lake surfaces and beds, and river surfaces and
-beds use this same mapping. Vintage Story's sea level follows the mapped
-datum (source Y=60 becomes Y=90 at height 384). Horizontal maps and climate
-data are unchanged; reuse the same `earthmap.regions` and `earthclimate.bin`
-without rerunning Python when choosing a different world height. A taller
-world stretches existing 8-bit elevation steps, not adds new terrain detail;
-changing an existing world's height requires regenerating its chunks.
-
-Visual Studio debugging
--------------------
-After running `python launch.py`, select `Client` or `Server` and press F5.
-The Debug build fails if `earthmap.regions` is absent. The game retains
-its normal AppData profile, credentials, saves, and `ModConfig`; the map
-artifact is loaded directly from `Geo/work/build/`. Map dimensions are read
-from the artifact header; no mod configuration dimensions are required.
-
-Advanced Geology server test
--------------------
-Set `VINTAGE_STORY` to the game installation directory, build the map with
-`python Geo/launch.py`, then run:
-
-    python ServerTests/run_ag_ores.py --ag-mod path/to/advancedgeology.zip
-
-This opt-in test builds both the mod and a test-only server probe, launches an
-isolated fresh world with AG, and searches a 32×32-chunk area near map center
-for non-granite rock and a non-gem metal ore block after world generation.
-It reports the found ore block code; failure or timeout returns a nonzero exit
-status. The world and temporary probe mod are removed afterward. It does not
-modify your normal Vintage Story saves or prove that every AG deposit type
-generates.
-
-Usage (in Vintage Story)
--------------------
-1. Copy both `Geo/work/build/earthmap.regions` and `Geo/work/build/earthclimate.bin` into your VS data directory:
-     Linux:   ~/.config/VintagestoryData/EarthMap/
-     Windows: %APPDATA%\VintagestoryData\EarthMap\
-
-2. Install the mod and create a world with the same dimensions as the generated
-   map. The mod reads map dimensions from `earthmap.regions` and loads regions
-   as needed.
-
-   The map is placed so that chunk 0,0 (top-left of the world) aligns with
-   the top-left of your PNG images. Map size must be a multiple of 512 blocks.
-   If you create a world that is larger than the generated images, you may spawn in the void since the entire area outside the valid image data zone is simply not generated.
-   Vintage story spawns you in the center of the total map dimensions and maps in-game coordinates to that center.
-
-Use `/earthmap climate` in-game at your player position to inspect the twelve
-monthly mean temperatures (January–December), annual mean temperature,
-annual P and PET (mm/year), effective rainfall (the vegetation wetness value),
-its P/(P+PET) and P/200 cap inputs, and the separate weather rain factor
-P/(P+800). The command requires the server-control privilege. EMCL stores
-monthly temperatures but only **annual** P and PET, so monthly rainfall and PET
-cannot be reported. `/earthmap pos` also reports the PNV class, inferred
-forest/shrub/grass density, fertility, soil depth, snow and terrain diagnostics.
-
-Earth terrain is filled before Vintage Story's rock-strata pass, so the game's
-procedural rock layers can replace the base granite. Ore generation runs in
-the later terrain-features pass. Changing this mod's worldgen order affects
-only newly generated chunks; regenerate existing chunks to replace their
-old all-granite terrain and rerun deposit generation.
-
-Limitations
--------------------
-- Map generation must be a multiple of 512 blocks.
-- The region height, river-surface and ocean-bed planes remain 8-bit source Y;
-  taller worlds stretch that resolution rather than gaining additional detail.
-- Rock types and ore locations use game/mod procedural generation; the Earth
-  data does not contain real-world lithology or mineral-deposit locations.
-- Vintage Story map resolutions/padding are hardcoded on the client.
-
-TODO
--------------------
-- Improve rivers.
-- Lake polygon quality and reservoir filtering remain limited by Natural Earth and OpenStreetMap coverage.
-- Vanilla structures like spawning inside rivers and under oceans, although this is apparently a vanilla bug.
-
-Data Used/Acknowledgments
--------------------
-- GMTED 250m DEM: https://edcintl.cr.usgs.gov/downloads/sciweb1/shared/topo/downloads/GMTED/Grid_ZipFiles/ds75_grd.zip
-- OpenStreetMap: https://www.openstreetmap.org/copyright
-- Natural Earth: https://www.naturalearthdata.com/
-- CHELSA V2.1 climatologies: https://chelsa-climate.org/datasets/chelsa_climatologies
-- Hengl et al. potential natural vegetation: https://doi.org/10.7910/DVN/QQHCIK
-- Reverse engineered existing Minecraft map programs, EarthTiles, earthtomc, worldpainter
-
-License 
--------------------
-vs-earth-map-creator is licensed under MIT - see ./LICENSE
+3. In game, `/earthmap pos` shows local terrain information, and
+   `/earthmap climate` shows local climate information. These commands require
+   the server-control privilege.
