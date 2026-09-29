@@ -1,6 +1,6 @@
 EarthMapCreatorO
 ================
-Generate a real-Earth map for Vintage Story.
+Generate a real-Earth map for Vintage Story. Mod originally by tlm920.
 
 What you need
 -------------
@@ -24,13 +24,14 @@ Generate a map
    - `ne_10m_lakes.zip` — [Natural Earth lakes](https://www.naturalearthdata.com/downloads/10m-physical-vectors/).
    - `HydroRIVERS_v10_na_shp/` — extract the [North/Central America HydroRIVERS shapefile](https://www.hydrosheds.org/products/hydrorivers) here; keep its `.shp`, `.shx`, `.dbf`, and `.prj` files together.
 
-   Other required data downloads automatically on the first run. Allow substantial
-   free disk space and time; the climate download alone is about 11 GB.
+   Other required data downloads automatically on the first run. This might take a couple hours and requires upwards of 15GB of 
+   space on top of the other datasets that are faster to manually download.
 
 3. Edit `Geo/config.py` for your desired latitude/longitude bounds and
    `FINAL_WIDTH`/`FINAL_LENGTH`. Choose dimensions in multiples of 512 blocks,
    and create a Vintage Story world with the same width and length. The default
    configuration targets a 25,600 × 25,600-block world in western/central North America.
+   There are also other configuration options that are mostly self-explanatory.
 
 4. From the `Geo/` directory, run:
 
@@ -39,6 +40,10 @@ Generate a map
    Wait for `=== Pipeline complete ===`. The files to install are
    `Geo/work/build/earthmap.regions` and `Geo/work/build/earthclimate.bin`.
    The PNGs in that directory are for previewing your map.
+
+   The map-production pipeline may take upwards of 30 minutes for a 25k map, depending on your CPU strength. 
+   Larger maps will take much longer. The resulting archives are also several GB, but they compress to a couple hundred MB at most for relatively easy distribution.
+   Players connecting to a server DO NOT need these map files.
 
 Play the map
 ------------
@@ -53,9 +58,6 @@ Play the map
 
 2. Install `earthmapcreatoro_<version>.zip` in the Vintage Story Mods folder,
    then start a new world with the dimensions you selected in `Geo/config.py`.
-   Keep the world within the generated map area; outside it, terrain is not
-   generated. If you change the map later, previously generated chunks do not
-   update automatically—use a new world or regenerate those chunks.
 
 3. In game, `/earthmap pos` shows local terrain information, and
    `/earthmap climate` shows local climate information. These commands require
