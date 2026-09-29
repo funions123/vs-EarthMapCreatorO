@@ -3,7 +3,7 @@
   <PropertyGroup>
     <ModName>EarthMapCreatorO</ModName>
     <ModType>code</ModType>
-    <ModVersion>0.9.0</ModVersion>
+    <ModVersion>0.9.0-dev.1</ModVersion>
     <ModId>earthmapcreatoro</ModId>
     <Description>Generate real-Earth maps for Vintage Story.</Description>
     <Side>universal</Side>
@@ -122,9 +122,9 @@
     <ItemGroup>
       <ModJson Include="assets/**/*.json" />
     </ItemGroup>
-    <Exec Condition="'$(OS)' == 'Windows_NT'"
+    <Exec Condition="'$(OS)' == 'Windows_NT' and '@(ModJson)' != ''"
           Command="powershell -NoProfile -NonInteractive -Command &quot;$ErrorActionPreference = 'Stop'; Get-Content -Raw -LiteralPath '%(ModJson.FullPath)' | ConvertFrom-Json | Out-Null&quot;" />
-    <Exec Condition="'$(OS)' != 'Windows_NT'"
+    <Exec Condition="'$(OS)' != 'Windows_NT' and '@(ModJson)' != ''"
           Command="python3 -m json.tool &quot;%(ModJson.FullPath)&quot; &gt; /dev/null" />
   </Target>
 

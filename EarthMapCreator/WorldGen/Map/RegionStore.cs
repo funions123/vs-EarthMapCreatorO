@@ -7,7 +7,7 @@ namespace EarthMapCreator;
 
 public enum MapPlane
 {
-    Height, LakeDepth, Bathymetry, Tree, River, RiverSurface,
+    Height, LakeDepth, Bathymetry, Vegetation, River, RiverSurface,
     RiverDepth, LakeMask, LandMask
 }
 
@@ -52,9 +52,9 @@ public sealed class RegionStore : IDisposable
             Span<byte> header = stackalloc byte[HeaderBytes];
             ReadFully(header, 0);
             if (!header[..8].SequenceEqual("EMREGION"u8) ||
-                BitConverter.ToInt32(header[8..12]) != 3 ||
+                BitConverter.ToInt32(header[8..12]) != 4 ||
                 BitConverter.ToInt32(header[20..24]) != Size)
-                throw new InvalidDataException("Unsupported Earth map region format");
+                throw new InvalidDataException("Unsupported Earth map region format; rebuild earthmap.regions (EMREGION v4)");
             Width = BitConverter.ToInt32(header[12..16]);
             Height = BitConverter.ToInt32(header[16..20]);
             SeaLevel = BitConverter.ToInt32(header[24..28]);

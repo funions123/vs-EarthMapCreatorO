@@ -57,12 +57,22 @@ public class EarthMapCreator : ModSystem
         string folder = ResolveMapDirectory(api);
         Mod.Logger.Notification("Loading Earth map regions from {0}", folder);
         Layers = new RegionStore(Path.Combine(folder, "earthmap.regions"));
-        ClimateData = new EarthClimate(Path.Combine(folder, "earthclimate.bin"), Layers.Width, Layers.Height);
+        try
+        {
+            ClimateData = new EarthClimate(Path.Combine(folder, "earthclimate.bin"), Layers.Width, Layers.Height);
+        }
+        catch
+        {
+            Layers.Dispose();
+            Layers = null;
+            throw;
+        }
     }
 
     public override void Dispose()
     {
         if (!loadedServerMaps) return;
+        ClimateData?.Dispose();
         ClimateData = null;
         Layers.Dispose();
         Layers = null;

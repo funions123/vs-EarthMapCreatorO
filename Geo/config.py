@@ -76,3 +76,5 @@ RIVER_BANK_SLOPE = 1
 
 # --- Dataset URLs ---
 OSM_LANDPOLYGONS_URL = "https://osmdata.openstreetmap.de/download/land-polygons-complete-4326.zip"
+PNV_DATASET_FILENAME = "pnv_biome.type_biome00k_c_1km_s0..0cm_2000..2017_v0.1.tif"
+PNV_DATASET_URL = "https://dataverse.harvard.edu/api/access/datafile/3137376?format=original"

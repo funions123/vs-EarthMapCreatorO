@@ -66,7 +66,7 @@ def main():
     grid, bounds = get_master_grid(cfg, proj_crs)
 
     # --- Pipeline stages ---
-    from pipeline import land, topography, tree, translate
+    from pipeline import land, topography, translate, vegetation
 
     log("=== Stage: land ===")
     land.run(WORK_DIR, DATASETS_DIR, grid, bounds, cfg)
@@ -74,8 +74,8 @@ def main():
     log("=== Stage: topography ===")
     topography.run(WORK_DIR, DATASETS_DIR, grid, bounds, cfg)
 
-    log("=== Stage: tree ===")
-    tree.run(WORK_DIR, DATASETS_DIR, grid, bounds, cfg)
+    log("=== Stage: vegetation ===")
+    vegetation.run(WORK_DIR, DATASETS_DIR, grid, bounds, cfg)
 
     log("=== Stage: translate ===")
     translate.run(WORK_DIR, grid, bounds, cfg)

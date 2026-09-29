@@ -15,10 +15,10 @@ import rasterio
 from rasterio.windows import Window
 
 MAGIC = b"EMREGION"
-VERSION = 3
+VERSION = 4
 REGION = 512
 HEADER = struct.Struct("<8sIIIII")
-LAYERS = ("heightmap", "lake_depth", "bathymetry_heightmap", "tree",
+LAYERS = ("heightmap", "lake_depth", "bathymetry_heightmap", "vegetation",
           "river", "river_surface", "river_depth", "lake_mask", "landmask")
 
 

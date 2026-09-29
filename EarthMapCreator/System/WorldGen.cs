@@ -46,7 +46,7 @@ public class EarthWorldGenerator : ModSystem
         int relativeX = pos.X % _api.WorldManager.RegionSize;
         int relativeZ = pos.Z % _api.WorldManager.RegionSize;
         MapRegion region = layers.GetRegion(regionX, regionZ);
-        int treeHere = region.Get(MapPlane.Tree, relativeX, relativeZ);
+        int vegetationHere = region.Get(MapPlane.Vegetation, relativeX, relativeZ);
         int worldHeight = _api.WorldManager.MapSizeY;
         int terrainHere = RegionStore.WorldY(region.Get(MapPlane.Height, relativeX, relativeZ), worldHeight);
         int bathyHere = RegionStore.WorldY(Math.Max(1, region.Get(MapPlane.Bathymetry, relativeX, relativeZ) - 1), worldHeight);
@@ -58,12 +58,19 @@ public class EarthWorldGenerator : ModSystem
         int riverSurfaceHere = RegionStore.WorldY(region.Get(MapPlane.RiverSurface, relativeX, relativeZ), worldHeight);
         int riverDepthHere = region.Get(MapPlane.RiverDepth, relativeX, relativeZ);
         EarthClimate climate = EarthMapCreator.ClimateData;
+        float annualTemperature = climate.AnnualTemperature(pos.X, pos.Z);
+        float warmestTemperature = climate.WarmestMonthTemperature(pos.X, pos.Z);
+        float vegetationWetness = climate.VegetationWetness(pos.X, pos.Z);
+        VegetationProfile vegetation = PotentialVegetation.Get(
+            vegetationHere, annualTemperature, warmestTemperature, vegetationWetness);
         String msg = $"At {pos.X}, {pos.Z}, (region {regionX}, {regionZ})\n" +
-                     $"Climate - annual {climate.AnnualTemperature(pos.X, pos.Z):F1}°C, " +
+                     $"Climate - annual {annualTemperature:F1}°C, " +
                      $"P {climate.AnnualPrecipitation(pos.X, pos.Z):F0} mm/year, " +
-                     $"vegetation wetness {climate.VegetationWetness(pos.X, pos.Z):F2}, " +
+                     $"vegetation wetness {vegetationWetness:F2}, " +
                      $"monthly {climate.MonthlyTemperature(pos.X, pos.Z, _api.World.Calendar.YearRel):F1}°C\n" +
-                     $"Tree: {treeHere}\n";
+                     $"EMREGION v4 PNV class: {vegetationHere}; forest: {vegetation.Forest}; shrub: {vegetation.Shrub}; " +
+                     $"grass: {vegetation.Grass:F2}; fertility: {vegetation.Fertility:F2}; soil depth: {vegetation.SoilDepth}; " +
+                     $"bare: {vegetation.Bare}; snow: {vegetation.Snow}\n";
 
         msg += $"Bathy (bed Y: {bathyHere})\n";
         msg += $"Land (Height: {terrainHere})\n";

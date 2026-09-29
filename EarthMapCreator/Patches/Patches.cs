@@ -12,9 +12,6 @@ using Vintagestory.GameContent;
 
 namespace EarthMapCreator.Patches;
 
-// --- Delegates for Private Methods ---
-// Define a delegate matching the signature of GenBlockLayers.PutLayers
-internal delegate int PutLayersDelegate(GenBlockLayers instance, double posRand, int lx, int lz, int posyoffs, BlockPos pos, IServerChunk[] chunks, float rainRel, float temp, int unscaledTemp, ushort[] heightMap, int biome);
 
 public class EarthMapPatches : ModSystem
 {
@@ -47,7 +44,7 @@ public class EarthMapPatches : ModSystem
     public override void StartServerSide(ICoreServerAPI api)
     {
         _api = api;
-        Patches.InitAccessors();
+        PotentialSurface.Initialize(api);
         _serverPatcher = new Harmony(Mod.Info.ModID + ".server");
         _serverPatcher.PatchCategory(Mod.Info.ModID);
     }
@@ -71,58 +68,23 @@ public class EarthMapPatches : ModSystem
 [HarmonyPatchCategory("earthmapcreatoro")]
 internal static class Patches
 {
-    // Private method delegate, bound once when the mod starts.
-    private static PutLayersDelegate PutLayers;
-    private static readonly string[] LowSoilCodes = { "soil-low-none", "soil-low-verysparse", "soil-low-sparse", "soil-low-normal" };
-    private static readonly string[] MediumSoilCodes = { "soil-medium-none", "soil-medium-verysparse", "soil-medium-sparse", "soil-medium-normal" };
-    private static readonly int[] lowSoilIds = new int[4];
-    private static readonly int[] mediumSoilIds = new int[4];
-    private const int RiverbankHaloRadius = 4;
-    [ThreadStatic] private static float? LayerTemperature;
+    // PNV surfaces are placed explicitly; vanilla's block-layer rainfall,
+    // soil-thickness and fertility selection are not used.
 
-    // CHELSA temperatures already include altitude. While this mod places Earth
-    // block layers, vanilla must not cool deeper layers by their Y below sea level.
-    [HarmonyTranspiler]
-    [HarmonyPatch(typeof(GenBlockLayers), "LoadBlockLayers")]
-    public static IEnumerable<CodeInstruction> FixedLayerTemperature(IEnumerable<CodeInstruction> instructions)
-    {
-        MethodInfo vanilla = AccessTools.Method(typeof(Vintagestory.API.Common.Climate), nameof(Vintagestory.API.Common.Climate.GetScaledAdjustedTemperatureFloat));
-        MethodInfo replacement = AccessTools.Method(typeof(Patches), nameof(LayerTemperatureFor));
-        int replaced = 0;
-        foreach (CodeInstruction instruction in instructions)
-        {
-            if (instruction.Calls(vanilla))
-            {
-                instruction.operand = replacement;
-                replaced++;
-            }
-            yield return instruction;
-        }
-        if (replaced != 1) throw new InvalidOperationException($"Expected one layer temperature call, found {replaced}");
-    }
-
-    private static float LayerTemperatureFor(int unscaledTemp, int distToSeaLevel) =>
-        LayerTemperature ?? Vintagestory.API.Common.Climate.GetScaledAdjustedTemperatureFloat(unscaledTemp, distToSeaLevel);
-
-    // The packed climate map contains CHELSA's terrain-level temperature.
-    // GenSnowLayer must not apply vanilla's second altitude correction.
-    [HarmonyTranspiler]
+    // Vanilla's snow pass tests annual climate against -10 °C. Generate
+    // initial snow only where the current in-game climate is below freezing;
+    // the weather simulation handles later accumulation and melting.
+    [HarmonyPrefix]
     [HarmonyPatch(typeof(GenSnowLayer), "OnChunkColumnGen")]
-    public static IEnumerable<CodeInstruction> SnowLayerSurfaceTemperature(IEnumerable<CodeInstruction> instructions)
+    public static bool SnowLayerAtCurrentTemperature(IChunkColumnGenerateRequest request)
     {
-        MethodInfo vanilla = AccessTools.Method(typeof(Vintagestory.API.Common.Climate), nameof(Vintagestory.API.Common.Climate.GetScaledAdjustedTemperatureFloat));
-        MethodInfo replacement = AccessTools.Method(typeof(Patches), nameof(SnowSurfaceTemperature));
-        int replaced = 0;
-        foreach (CodeInstruction instruction in instructions)
-        {
-            if (instruction.Calls(vanilla))
-            {
-                instruction.operand = replacement;
-                replaced++;
-            }
-            yield return instruction;
-        }
-        if (replaced != 1) throw new InvalidOperationException($"Expected one snow-layer temperature call, found {replaced}");
+        var api = EarthMapPatches._api;
+        var layers = EarthMapCreator.Layers;
+        int x = request.ChunkX * api.WorldManager.ChunkSize;
+        int z = request.ChunkZ * api.WorldManager.ChunkSize;
+        if (!layers.Contains(x, z)) return true;
+        PotentialSurface.PlaceSeasonalSnow(api, request);
+        return false;
     }
 
     private static float SnowSurfaceTemperature(int unscaledTemp, int distToSeaLevel) =>
@@ -158,6 +120,18 @@ internal static class Patches
     [HarmonyTranspiler]
     [HarmonyPatch(typeof(WgenTreeSupplier), "GetRandomGenForClimate")]
     public static IEnumerable<CodeInstruction> TreeTemperature(IEnumerable<CodeInstruction> instructions) => SurfaceIntegerTemperature(instructions);
+
+    // Vanilla interpolates the forest map and gives trees a nonzero minimum chance
+    // even at zero density. Shrubs set skipForestFloor; guard only actual trees.
+    [HarmonyPrefix]
+    [HarmonyPatch(typeof(TreeGenInstance), nameof(TreeGenInstance.GrowTree))]
+    public static bool TreeGenInstance_GrowTree_Prefix(TreeGenInstance __instance, BlockPos pos)
+    {
+        if (__instance.skipForestFloor) return true;
+        EarthClimate climate = EarthMapCreator.ClimateData;
+        return climate == null || !climate.Contains(pos.X, pos.Z) ||
+            climate.WarmestMonthTemperature(pos.X, pos.Z) >= PotentialVegetation.TreeGrowingSeasonTemperature;
+    }
 
     [HarmonyTranspiler]
     [HarmonyPatch(typeof(WorldGenStructure), "TryGenerate")]
@@ -236,7 +210,11 @@ internal static class Patches
         if (earth == null || !earth.Contains(posX, posZ)) return;
         int temp = Vintagestory.API.Common.Climate.DescaleTemperature(
             TerrainTemperature(earth, posX, posY, posZ, __instance.MapSizeY));
+        // Bit 7 of the season-map byte tells our shader that this byte already
+        // describes air at local terrain, not vanilla sea-level air.
         __result.Value = (__result.Value & ~(0xFF << 16)) | (temp << 16);
+        if ((__result.Value & 0x3F) != 0 && (__result.Value & 0xC0) == 0)
+            __result.Value |= 0x80;
     }
 
     public static bool ClientPositionColorMap(Vintagestory.Client.NoObf.ClientWorldMap __instance,
@@ -262,148 +240,45 @@ internal static class Patches
 
 
     
-    public static void InitAccessors()
-    {
-        Type gblType = typeof(GenBlockLayers);
-        
-        MethodInfo putLayersMethod = AccessTools.Method(gblType, "PutLayers", new Type[] { typeof(double), typeof(int), typeof(int), typeof(int), typeof(BlockPos), typeof(IServerChunk[]), typeof(float), typeof(float), typeof(int), typeof(ushort[]), typeof(int) });
-        var blocks = EarthMapPatches._api.World;
-        for (int coverage = 0; coverage < LowSoilCodes.Length; coverage++)
-        {
-            lowSoilIds[coverage] = blocks.GetBlock(new AssetLocation("game", LowSoilCodes[coverage])).Id;
-            mediumSoilIds[coverage] = blocks.GetBlock(new AssetLocation("game", MediumSoilCodes[coverage])).Id;
-        }
-        PutLayers = (PutLayersDelegate)Delegate.CreateDelegate(typeof(PutLayersDelegate), putLayersMethod);
-    }
-
-
     [HarmonyPrefix]
     [HarmonyPatch(typeof(GenBlockLayers), "OnChunkColumnGeneration", new Type[] { typeof(IChunkColumnGenerateRequest) })]
-    public static bool GenBlockLayers_OnChunkColumnGen_Prefix(GenBlockLayers __instance, IChunkColumnGenerateRequest request)
+    public static bool GenBlockLayers_OnChunkColumnGen_Prefix(IChunkColumnGenerateRequest request)
     {
         var api = EarthMapPatches._api;
-        var mapheight = api.WorldManager.MapSizeY;
-        var chunksize = api.WorldManager.ChunkSize;
-        
-        // --- Core Logic ---
+        var layers = EarthMapCreator.Layers;
+        var climate = EarthMapCreator.ClimateData;
         var chunks = request.Chunks;
-        int chunkX = request.ChunkX;
-        int chunkZ = request.ChunkZ;
-
-        // Your patched OnChunkColumnGeneration still requires the climate map data
-        IntDataMap2D forestMap = chunks[0].MapChunk.MapRegion.ForestMap;
-        IntDataMap2D biomeMap = chunks[0].MapChunk.MapRegion.BiomeMap;
-        
-        RegionStore layers = EarthMapCreator.Layers;
-        ushort[] heightMap = chunks[0].MapChunk.RainHeightMap;
-
-        int regionChunkSize = api.WorldManager.RegionSize / chunksize;
-        int rdx = chunkX % regionChunkSize;
-        int rdz = chunkZ % regionChunkSize;
-
-        // Amount of data points per chunk
-        float forestStep = (float)forestMap.InnerSize / regionChunkSize;
-        float biomeStep = biomeMap == null ? 0 : (float)biomeMap.InnerSize / regionChunkSize;
-
-        // Retrieves the map data on the chunk edges
-        int forestUpLeft = forestMap.GetUnpaddedInt((int)(rdx * forestStep), (int)(rdz * forestStep));
-        int forestUpRight = forestMap.GetUnpaddedInt((int)(rdx * forestStep + forestStep), (int)(rdz * forestStep));
-        int forestBotLeft = forestMap.GetUnpaddedInt((int)(rdx * forestStep), (int)(rdz * forestStep + forestStep));
-        int forestBotRight = forestMap.GetUnpaddedInt((int)(rdx * forestStep + forestStep), (int)(rdz * forestStep + forestStep));
-
-        // increasing x -> left to right
-        // increasing z -> top to bottom
-        float transitionSize = __instance.blockLayerConfig.blockLayerTransitionSize;
-        BlockPos herePos = new BlockPos(0);
-
-
-        for (int x = 0; x < chunksize; x++)
+        int size = api.WorldManager.ChunkSize;
+        int originX = request.ChunkX * size;
+        int originZ = request.ChunkZ * size;
+        ushort[] rainHeight = chunks[0].MapChunk.RainHeightMap;
+        ushort[] groundHeight = chunks[0].MapChunk.WorldGenTerrainHeightMap;
+        for (int z = 0; z < size; z++)
         {
-            for (int z = 0; z < chunksize; z++)
+            for (int x = 0; x < size; x++)
             {
-                int biome = biomeMap == null ? 0 : biomeMap.GetUnpaddedInt(
-                    (int)(rdx * biomeStep + (float)x / chunksize * biomeStep),
-                    (int)(rdz * biomeStep + (float)z / chunksize * biomeStep));
-                herePos.Set(chunkX * chunksize + x, 1, chunkZ * chunksize + z);
-                
-                // Keep posRand for transitionRand calculation, removed climate jittering call
-                double posRand = (double)GameMath.MurmurHash3(herePos.X, 1, herePos.Z) / int.MaxValue;
-                double transitionRand = (posRand + 1) * transitionSize;
+                int worldX = originX + x, worldZ = originZ + z;
+                if (!layers.Contains(worldX, worldZ)) continue;
+                bool ocean = layers.Get(MapPlane.LandMask, worldX, worldZ) == 0;
+                bool lake = layers.Get(MapPlane.LakeMask, worldX, worldZ) != 0;
+                bool river = layers.Get(MapPlane.River, worldX, worldZ) != 0;
+                if (!ocean && !lake && !river && layers.Get(MapPlane.Vegetation, worldX, worldZ) == 0) continue;
+                int index = z * size + x;
+                int ground = groundHeight[index];
+                int surface = rainHeight[index];
+                if (ground <= 0 || ground >= api.WorldManager.MapSizeY) continue;
+                var data = chunks[ground / size].Data;
+                int blockIndex = ((ground % size) * size + z) * size + x;
+                int rockId = data.GetBlockIdUnsafe(blockIndex);
+                if (api.World.Blocks[rockId].BlockMaterial != EnumBlockMaterial.Stone) continue;
 
-                int posY = heightMap[z * chunksize + x];
-                if (posY >= mapheight) continue;
-
-                EarthClimate earth = EarthMapCreator.ClimateData;
-                float annualTemp = earth.AnnualTemperature(herePos.X, herePos.Z);
-                float warmest = earth.WarmestMonthTemperature(herePos.X, herePos.Z);
-                float rainRel = earth.VegetationWetness(herePos.X, herePos.Z);
-                int tempUnscaled = Vintagestory.API.Common.Climate.DescaleTemperature(annualTemp);
-                float tempRel = tempUnscaled / 255f;
-                // Only block layers use this classification; weather retains the real climate.
-                // Snowpack sites use -20 °C, selecting full snow blocks over gravel.
-                float temp = warmest < EarthMapCreator.config.SnowpackWarmestMonthTemperature ? -20f : Math.Max(annualTemp, -10f);
-                if (warmest < EarthClimate.GrassGrowingSeasonTemperature || (annualTemp < 10f && rainRel < 0.19f))
-                    rainRel = 0f;
-                
-                float forestRel = GameMath.BiLerp(forestUpLeft, forestUpRight, forestBotLeft, forestBotRight, (float)x / chunksize, (float)z / chunksize) / 255f;
-
-                int rocky = chunks[0].MapChunk.WorldGenTerrainHeightMap[z * chunksize + x];
-                int chunkY = rocky / chunksize;
-                int lY = rocky % chunksize;
-                int index3d = (chunksize * lY + z) * chunksize + x;
-
-                int rockblockID = chunks[chunkY].Data.GetBlockIdUnsafe(index3d);
-                var hereblock = api.World.Blocks[rockblockID];
-                if (hereblock.BlockMaterial != EnumBlockMaterial.Stone && hereblock.BlockMaterial != EnumBlockMaterial.Water)
-                {
-                    continue;
-                }
-
-                herePos.Y = posY;
-                int disty = (int)(__instance.distort2dx.Noise(-herePos.X, -herePos.Z) / 4.0);
-                LayerTemperature = temp;
-                try
-                {
-                    PutLayers(__instance, transitionRand, x, z, disty, herePos, chunks, rainRel, temp, tempUnscaled, heightMap, biome);
-                }
-                finally
-                {
-                    LayerTemperature = null;
-                }
-                if (layers.Contains(herePos.X, herePos.Z) && rainRel >= 0.19f && warmest >= EarthClimate.GrassGrowingSeasonTemperature &&
-                    layers.Get(MapPlane.LandMask, herePos.X, herePos.Z) != 0 &&
-                    layers.Get(MapPlane.LakeMask, herePos.X, herePos.Z) == 0 &&
-                    layers.Get(MapPlane.River, herePos.X, herePos.Z) == 0)
-                {
-                    int surfaceY = chunks[0].MapChunk.WorldGenTerrainHeightMap[z * chunksize + x];
-                    int surfaceIndex = (chunksize * (surfaceY % chunksize) + z) * chunksize + x;
-                    var surfaceData = chunks[surfaceY / chunksize].Data;
-                    int surfaceBlockId = surfaceData.GetBlockIdUnsafe(surfaceIndex);
-                    for (int coverage = 0; coverage < lowSoilIds.Length; coverage++)
-                    {
-                        if (surfaceBlockId != lowSoilIds[coverage]) continue;
-                        if (IsNearRiver(layers, herePos.X, herePos.Z))
-                            surfaceData[surfaceIndex] = mediumSoilIds[coverage];
-                        break;
-                    }
-                }
-                if (warmest >= EarthClimate.GrassGrowingSeasonTemperature)
-                    __instance.PlaceTallGrass(x, posY, z, chunks, rainRel, tempRel, temp, forestRel, biome);
-            }
-        }
-        
-        return false; // Skip the original function
-    }
-    
-    private static bool IsNearRiver(RegionStore layers, int x, int z)
-    {
-        for (int dz = -RiverbankHaloRadius; dz <= RiverbankHaloRadius; dz++)
-        {
-            for (int dx = -RiverbankHaloRadius; dx <= RiverbankHaloRadius; dx++)
-            {
-                if (dx * dx + dz * dz > RiverbankHaloRadius * RiverbankHaloRadius) continue;
-                int rx = x + dx, rz = z + dz;
-                if (layers.Contains(rx, rz) && layers.Get(MapPlane.River, rx, rz) != 0) return true;
+                float temp = climate.AnnualTemperature(worldX, worldZ);
+                float warmest = climate.WarmestMonthTemperature(worldX, worldZ);
+                float wetness = climate.VegetationWetness(worldX, worldZ);
+                int biome = layers.Get(MapPlane.Vegetation, worldX, worldZ);
+                var profile = PotentialVegetation.Get(biome, temp, warmest, wetness);
+                PotentialSurface.Place(api, chunks, x, z, worldX, worldZ, surface, ground,
+                    rockId, profile, biome, temp, wetness, profile.Forest, ocean, lake, river);
             }
         }
         return false;
@@ -435,16 +310,25 @@ internal static class Patches
     public static bool GetForestMapGen_Prefix(long seed, int scale, ref MapLayerBase __result)
     {
         var sapi = EarthMapPatches._api;
-        if (sapi == null || seed != sapi.WorldManager.Seed + 2 || scale != TerraGenConfig.forestMapScale)
+        if (sapi == null) return true;
+
+        long worldSeed = sapi.WorldManager.Seed;
+        bool forest = seed == worldSeed + 2 && scale == TerraGenConfig.forestMapScale;
+        bool shrub = seed == worldSeed + 109 && scale == TerraGenConfig.shrubMapScale;
+        if (!forest && !shrub)
         {
-            return true; // Shrub and biome generators must retain their vanilla data.
+            return true; // The seed + 223 biome generator retains its vanilla data.
         }
 
-        sapi.Logger.Notification("[EarthMapCreator] Harmony patch triggered: Overwriting GetForestMapGen.");
-
-        __result = new MapLayerFromImage(seed, EarthMapCreator.Layers, MapPlane.Tree, sapi, scale, ForestMapProcessor.ForestPostProcess);
-        
-        return false; // Skip the original method
+        sapi.Logger.Notification($"[EarthMapCreator] Overwriting {(forest ? "forest" : "shrub")} map with potential natural vegetation.");
+        __result = new MapLayerFromImage(
+            seed,
+            EarthMapCreator.Layers,
+            MapPlane.Vegetation,
+            sapi,
+            scale,
+            forest ? ForestMapProcessor.ForestPostProcess : ForestMapProcessor.ShrubPostProcess);
+        return false;
     }
     
     [HarmonyPrefix]
@@ -465,6 +349,82 @@ internal static class Patches
     public static void WeatherPrecipitation_Postfix(ClimateCondition conds, float? __state)
     {
         if (__state.HasValue) conds.Rainfall = __state.Value;
+    }
+
+    // Vanilla records snow at sea level and world top, then interpolates the
+    // *accumulation rates* at the ground. CHELSA's terrain-relative lapse can
+    // put sea level above freezing and the ground below it; interpolating the
+    // melt and snowfall branches then cancels real snowfall. Sample the same
+    // hourly climate at the actual ground for both vertical snapshot corners.
+    [HarmonyPrefix]
+    [HarmonyPatch(typeof(WeatherSimulationRegion), nameof(WeatherSimulationRegion.UpdateSnowAccumulation))]
+    public static void SnowAccumulationStart(WeatherSimulationRegion __instance, out double __state) =>
+        __state = __instance.LastUpdateTotalHours;
+
+    [HarmonyPostfix]
+    [HarmonyPatch(typeof(WeatherSimulationRegion), nameof(WeatherSimulationRegion.UpdateSnowAccumulation))]
+    public static void SnowAccumulationAtTerrain(WeatherSimulationRegion __instance, int count,
+        double __state, WeatherSystemBase ___ws)
+    {
+        EarthClimate earth = EarthMapCreator.ClimateData;
+        if (earth == null || count <= 0 || __instance.LastUpdateTotalHours != __state + count) return;
+
+        var world = ___ws.api.World;
+        int regionSize = world.BlockAccessor.RegionSize;
+        float hoursPerDay = world.Calendar.HoursPerDay;
+        int top = world.BlockAccessor.MapSizeY - 1;
+        int resolution = WeatherSimulationRegion.snowAccumResolution;
+        var snapshots = new SnowAccumSnapshot[count];
+        lock (WeatherSimulationRegion.snowAccumSnapshotLock)
+        {
+            bool found = false;
+            for (int i = 0; i < __instance.SnowAccumSnapshots.Length; i++)
+            {
+                SnowAccumSnapshot snapshot = __instance.SnowAccumSnapshots[i];
+                if (snapshot == null) continue;
+                int hour = (int)(snapshot.TotalHours - __state);
+                if ((uint)hour < (uint)snapshots.Length && snapshot.TotalHours == __state + hour)
+                {
+                    snapshots[hour] = snapshot;
+                    found = true;
+                }
+            }
+            if (!found) return;
+
+            var pos = new BlockPos(0);
+            for (int x = 0; x < resolution; x++)
+            for (int z = 0; z < resolution; z++)
+            {
+                pos.X = __instance.regionX * regionSize + x * (regionSize - 1);
+                pos.Z = __instance.regionZ * regionSize + z * (regionSize - 1);
+                if (!earth.Contains(pos.X, pos.Z)) continue;
+                float sourceY = earth.ReferenceTerrainY(pos.X, pos.Z);
+                if (!float.IsFinite(sourceY)) continue;
+                pos.Y = Math.Clamp(RegionStore.WorldY((int)MathF.Round(sourceY), top + 1), 0, top);
+
+                ClimateCondition climate = null;
+                for (int hour = 0; hour < snapshots.Length; hour++)
+                {
+                    double totalHours = __state + hour;
+                    double day = (totalHours + 0.5) / hoursPerDay;
+                    if (climate == null)
+                        climate = world.BlockAccessor.GetClimateAt(pos, EnumGetClimateMode.ForSuppliedDate_TemperatureRainfallOnly, day);
+                    else
+                        world.BlockAccessor.GetClimateAt(pos, climate, EnumGetClimateMode.ForSuppliedDate_TemperatureRainfallOnly, day);
+                    if (climate == null) break;
+                    float rate = climate.Temperature > 1.5f || (climate.Rainfall < 0.05f && climate.Temperature > 0f)
+                        ? -climate.Temperature / 15f : climate.Rainfall / 3f;
+                    SnowAccumSnapshot snapshot = snapshots[hour];
+                    if (snapshot == null) continue;
+                    // Replace, rather than add to, both sea/top rates. The snow
+                    // layer scanner still uses vanilla's height interpolation.
+                    snapshot.SnowAccumulationByRegionCorner.AddValue(x, 0, z,
+                        rate - snapshot.SnowAccumulationByRegionCorner.GetValue(x, 0, z));
+                    snapshot.SnowAccumulationByRegionCorner.AddValue(x, 1, z,
+                        rate - snapshot.SnowAccumulationByRegionCorner.GetValue(x, 1, z));
+                }
+            }
+        }
     }
 
     [HarmonyPrefix]

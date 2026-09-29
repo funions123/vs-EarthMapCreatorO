@@ -56,8 +56,6 @@ placed manually in Geo/datasets/ before running:
   ne_10m_lakes.zip          Natural Earth lakes + reservoirs (the pipeline filters reservoirs)
                             https://www.naturalearthdata.com/downloads/10m-physical-vectors/
 
-  gm_ve_v1.zip              Global vegetation canopy cover
-                            https://www.earthenv.org/vegetation
 
   HydroRIVERS_v10_na_shp/  Extract the North/Central America HydroRIVERS
                             shapefile here, including .shp, .shx, .dbf, .prj:
@@ -70,6 +68,11 @@ The following are downloaded automatically on first run and cached:
     Cached as `CHELSA_{variable}_{MM}_1981-2010_V.2.1.tif` in `Geo/datasets/`.
     Source: https://chelsa-climate.org/datasets/chelsa_climatologies
     Files: https://os.unil.cloud.switch.ch/chelsa02/chelsa/global/climatologies/
+  - Hengl et al. (2018) predicted potential natural vegetation classes at ~1 km:
+    `pnv_biome.type_biome00k_c_1km_s0..0cm_2000..2017_v0.1.tif`.
+    Dataset: https://doi.org/10.7910/DVN/QQHCIK (map data: ODbL 1.0;
+    check redistribution and share-alike obligations for baked derivatives).
+
 
 
 Once datasets are in place:
@@ -88,56 +91,69 @@ Once datasets are in place:
   3. Run the pipeline:
        python launch.py
 
-  4. Nine PNGs for inspection, `earthmap.regions` (EMREGION v3), and
+  4. Nine PNGs for inspection, `earthmap.regions` (EMREGION v4), and
      `earthclimate.bin` for the mod are written to Geo/work/build/.
 
 The climate stage samples CHELSA V2.1 1981–2010 monthly temperature (`tas`,
 scaled kelvin), precipitation (`pr`) and Penman–Monteith potential
-evapotranspiration (`pet`) at 32-block intervals on the final output grid.
+evapotranspiration (`pet`) every 8 blocks on the final output grid.
 Precipitation and PET are in kg/m²/month (numerically mm/month); the twelve
 monthly totals are summed for each annual value. TIFF scale, offset, and
 NoData metadata are honored. EMCL v2 contains a 24-byte little-endian header
 (`EMCL`, version 2, width, height, spacing, float32 lapse), followed by
 Z-major samples of twelve signed temperatures (tenths of °C), annual
 precipitation and annual PET (unsigned millimetres), and the mean terrain Y of
-the sample's 32×32 cell (unsigned tenths of a source block; ocean counts as
-sea level). The climate stage reads the final `heightmap.png`, `landmask.png`
-and `lake_mask.png`, and fits the lapse (°C per source block) from local
-CHELSA temperature/terrain differences (about -0.12 on the current map).
+the sample's 8×8 cell (unsigned tenths of a source block; ocean counts as sea
+level). The climate stage reads the final `heightmap.png`, `landmask.png` and
+`lake_mask.png`, and fits the lapse (°C per source block) from local CHELSA
+temperature/terrain differences.
 Sea samples use the nearest available coastal CHELSA value. Dimensions must
-match `earthmap.regions`; the mod rejects missing, mismatched, or EMCL v1
-climate files at startup.
+match `earthmap.regions`; missing, mismatched, EMCL v1 or older 32-block
+climate files are rejected at startup. At 25,600×25,600 blocks the 8-block
+file is 307.2 MB on the server. Rebuild `earthclimate.bin` when upgrading;
+`earthmap.regions` need not change for this climate-only cutover.
+Clients do not need either map file locally. The server streams compressed
+512-block climate tiles around loaded client regions; each tile includes an
+8-block sample halo for interpolation. Tiles outside that area are released
+when regions unload. Climate-dependent client overlays fall back to vanilla
+until the relevant tile arrives. The full 307.2 MB file remains server-side.
 
 Runtime temperature at a block adds `lapse × (block Y − cell terrain Y)`, with
 block Y converted to source Y for taller worlds. CHELSA describes air at the
 smoothed terrain, so summits are colder than their cell and valleys warmer.
-This also matters for snow: Vintage Story's snow accumulation samples each
-512-block region at the world's sea level and at world top, then interpolates
-by height. The mod's climate callback supplies a distinct temperature for
-each height; it does not inherit vanilla's altitude adjustment. Snowmelt also
-depends on hourly temperature variation, rainfall, snow-layer ticks, and saved
-snow state. A colder summit does not guarantee snow throughout spring; check
-the actual world's sea level and seasonal weather before predicting duration.
+Vintage Story's snow simulation normally samples each 512-block region at
+sea level and world top, turns those temperatures into melt/snowfall rates,
+then interpolates the *rates* to the ground. With CHELSA's terrain-relative
+lapse, the sea-level sample can be warm while elevated ground is freezing;
+interpolating those rates can cancel snowfall even at precipitation override 1.
+The mod samples the same hourly climate at the CHELSA cell's terrain elevation
+for both vertical snow-snapshot corners instead. Vanilla still controls hourly
+temperature variation, precipitation, snow-layer ticks and saved snow state.
+`/weather setprecip 1` changes rainfall but does not advance game hours or
+immediately rescan chunks; use `/debug snowaccum info` and
+`/debug snowaccum processhere` to inspect or request a local update.
 
 On server startup the mod reapplies the region file's sea-level datum during
 asset finalization, after vanilla terrain setup (which otherwise resets it to
-110 in a 256-high world). This keeps the weather snow sampler's lower Y,
-snow-accumulation interpolation, rainfall scaling, and map terrain on the same
-datum. Vanilla `GenSnowLayer` otherwise cools the projected CHELSA climate map
-a second time by altitude and places snow in locations warmer than its runtime
-melting threshold; the snow placement hook uses CHELSA's surface temperature
-without that second adjustment. Existing snow placed in already generated
-chunks is not rebuilt by this change; newly generated chunks use it.
+110 in a 256-high world). This keeps runtime weather and the map terrain on
+the same datum. Vanilla `GenSnowLayer` otherwise cools the projected CHELSA
+climate map a second time by altitude and places snow in locations warmer than
+its runtime melting threshold; the snow placement hook uses CHELSA's surface
+temperature without that second adjustment. Existing snow placed in already
+generated chunks is not rebuilt by this change; newly generated chunks use it.
 
-Worldgen block layers sample annual temperature and vegetation wetness
-`min(P/(P+max(PET,1)), P/200, 1)`. A projected VS climate map lets built-in
-trees, shrubs, and patches continue using their current JSON selection
-thresholds. Both server and client use the monthly temperature curve: the
-universal mod transfers the compressed climate grid in 32 KiB chunks after
-joining, so clients need the mod but no local map files. Server generation
-keeps its own climate grid when an integrated client receives the transfer.
-Until transfer finishes, client temperature uses vanilla behavior. Weather
-precipitation noise and weather-event selection use annual P via `P/(P+800)`,
+Worldgen ground cover and forest/shrub density are selected from Hengl's
+potential natural vegetation (PNV) biome classes, tempered by CHELSA annual
+temperature, warmest-month temperature and P/PET wetness. The PNV map represents
+vegetation without human land use, **not** observed present-day canopy or soil.
+Vanilla still chooses tree and shrub species using the projected climate map.
+Both server and client use the monthly temperature curve. The server retains
+the full climate file and sends only climate tiles around regions loaded by
+each client; a 512-block region needs a 65×65 sample tile with a one-sample
+edge halo for seamless interpolation. Clients need the mod but no local map
+files. Server generation keeps independent climate data in integrated play.
+Until a client's tile arrives, its temperature accessors use vanilla behavior.
+Weather precipitation noise and weather-event selection use annual P via `P/(P+800)`,
 a provisional normalization rather than measured rain frequency. Weather
 patterns may continue to use vegetation wetness.
 
@@ -149,34 +165,57 @@ surface patches. Server and client climate accessors instead expose the EMCL
 annual temperature plus its cell-relative lapse at the requested Y; the
 monthly callback still supplies seasonal, diurnal and weather variation.
 Client block and world colormaps use the same terrain-referenced temperature
-while retaining vanilla precipitation and season coloring. These corrections
-change generation and new client tints; already generated terrain is not
-rewritten.
+while retaining vanilla precipitation and season coloring. Vintage Story's
+grass/foliage shader normally adds altitude back to its seasonal tint weight,
+assuming a sea-level temperature byte. The mod tags climate-tiled mesh colors
+and skips that reversal: on elevated terrain it otherwise removes the green
+summer overlay and leaves the brown annual climate tint. Areas without a
+client climate tile initially use vanilla tint behavior; at high elevations
+their pre-tile meshes may even appear frosted in warm weather because the
+shader combines the old cold mesh byte with the new seasonal temperature.
+When the tile arrives, the client retessellates loaded chunks in that region
+so foliage and grass get their CHELSA temperature and lose false frost.
+Already generated terrain is not rewritten.
+This fixes shader frost from stale mesh climate bytes, not snow-covered blocks
+or layers saved by the weather simulation; those melt through normal snow
+updates.
 
-The server-side `topsoil-patch.json` adjusts Vintage Story's blocklayers for
-CHELSA's annual P/PET wetness scale. At wetness ≥ 0.15 and fertility ≥ 0.10,
-warm low-fertility ground gets sparse low-fertility grass soil over low-fertility
-subsoil rather than an infertile sand stack; below 0.15 the dry sand/gravel
-layers remain. The lowest tallgrass moisture threshold is also 0.15.
+`Geo/work/build/vegetation.png` replaces the measured canopy image in the
+nine-plane region store. The categorical byte contains Hengl biome IDs
+(1–4, 7–9, 13–20, 22, 27–28, 30–32). PNV NoData land cells copy the
+nearest classified PNV cell in the master raster before the final categorical
+resize. The final grid feathers biome boundaries over at most four blocks by
+sampling neighboring **class labels** with stable coordinate-based jitter;
+numeric biome IDs are never averaged, and class interiors stay unchanged.
+Final lake and coastal water remains zero. Large unclassified source areas
+inherit a neighboring class rather than independent ecological evidence.
+The same potential-vegetation profile feeds forest and shrub density, grass,
+soil depth and soil-fertility classes. Sufficiently dense PNV forests use
+vanilla forest-floor stages above soil rather than ordinary grassy soil.
+Medium/high-fertility surface soil is at least very sparsely covered when warm
+enough for grass; exposed mineral still occurs on steep or naturally bare
+patches. Steppe can retain medium-fertility soil even in dry climates.
+Trees do not generate where CHELSA's warmest monthly mean is below 10 °C,
+even if PNV labels the site as forest. The forest density and actual tree
+placement both enforce this cutoff; shrubs and grass retain their own
+temperature response. This can make high alpine sites treeless without
+forcing permanent snow.
+Dry scrub/desert may expose gravel or locally sand, while steep terrain loses
+soil and mapped riverbanks accumulate it. Lakes and ocean beds retain their
+separate vanilla material selection. Permanent snow uses the configured
+`SnowpackWarmestMonthTemperature` (default 5 °C); climate still governs weather
+and seasons. Fertility and depth are inferred worldgen estimates, not soil
+measurements. Regenerate existing chunks to change their surfaces.
 
-Surface selection uses the warmest CHELSA month rather than world height.
-Snowpack sites—warmest month below `SnowpackWarmestMonthTemperature` in the
-server's `ModConfig/EarthMapCreator.json` (default 5 °C)—get a -20 °C layer
-temperature, producing full snow blocks over gravel. This marks regions whose
-summers stay near freezing. Colorado's permanent snow survives only in
-microclimates below the 32-block climate grid: the coldest sample on the
-current map (Mt Elbert) has a warmest month of about 8 °C, and Arapaho Glacier
-samples about 11.3 °C. The current map therefore has no snowpack at the
-default. Warmer sites use a layer temperature of at
-least -10 °C. Below 12 °C, block-layer moisture is set
-to zero, producing tundra gravel without grass. Seasonal cold deserts with an
-annual mean below 10 °C and wetness below 0.19 also use dry gravel (including
-Alamosa); wetter cold sites can keep sparse grass. Vanilla cools each deeper
-layer by its height; CHELSA already includes altitude, so a Harmony
-transpiler holds the whole stack at the column's layer temperature. All
-glacier-ice layers and the high-Y and cold-mountain gravel layers are removed.
-Stored P/PET and weather stay unchanged. Regenerate existing chunks to see the
-updated surface and subsurface.
+Newly generated terrain receives a thin `snowlayer-1` on solid exposed
+surfaces only when the current in-game temperature at that column is at or
+below freezing. This includes mountains in cold months but does not put
+snow on warm August summits merely because their annual climate is cold.
+New snow layers also initialize Vintage Story's per-column snow-accumulation
+value. Without this, the first chunk snow scan treats a one-layer block as
+less than its retention threshold and immediately removes it, even in freezing
+weather. Normal weather simulation subsequently accumulates or melts the
+layers; permanent snowpack remains a separate warmest-month decision.
 
 Vanilla surface block patches also read the packed climate map. Their
 temperature check must not apply a second altitude correction to CHELSA's
@@ -187,12 +226,12 @@ remain tied to vanilla flint deposits in sandstone, shale, claystone, chalk,
 or limestone; the change does not generate flint over other rock types.
 Already generated chunks keep their existing surface blocks.
 
-The region-store v3 header records the sea-level Y from `Geo/config.py`; v2
-files must be rebuilt so the mod can read the same datum used for terrain,
-bathymetry, rivers, and oceans. Stop any game/server using the existing region
-file before running the pipeline so Windows can replace it.
-A new map takes effect for newly generated chunks; regenerate
-existing chunks to update their climate-derived terrain and vegetation.
+EMREGION v4 retains the nine-plane layout and sea-level Y header from v3,
+but replaces its tree-canopy byte with the PNV class at plane index 3.
+Older files are rejected; rebuild `earthmap.regions` before starting the mod.
+Stop any game/server using the existing region file before running the pipeline
+so Windows can replace it. A new map affects newly generated chunks only;
+regenerate existing chunks to update their terrain and vegetation.
 
 Natural Earth supplies the lake polygons. Records classified as `Lake` or
 `Alkaline Lake` are candidates; `Reservoir` records are excluded. Natural
@@ -283,14 +322,12 @@ water Y and `river_depth.png` stores 1–3 block depths. Rebuild all maps after
 changing projection, bounds, scale, or river selection/width/depth settings in
 `Geo/config.py`.
 
-During block-layer generation, dry land within four blocks of a mapped river
-channel upgrades only existing `soil-low-*` surface blocks to `soil-medium-*`,
-keeping their grass coverage variant. The halo crosses chunk and map-region
-boundaries, but does not affect riverbeds, lakes, oceans, existing medium soil,
-or gravel/sand. It requires vegetation wetness ≥ 0.19 and a warmest month of
-at least 12 °C; dry cold deserts and tundra therefore remain unaltered. This
-does not change stored climate, river maps, or subsurface blocks. Regenerate
-existing chunks to apply it.
+River proximity affects the PNV surface profile: soil-bearing dry land within
+four blocks of a mapped channel gains depth and at least medium fertility;
+its cover still follows the base biome: a dry scrub or desert bank can have
+very sparse grass on medium soil; wetter grassland remains denser, and forest
+keeps forest floor. Water columns remain underwater beds. Regenerate existing
+chunks to apply this change.
 
 The pipeline reads an extracted dataset from `Geo/datasets/`, or from
 `~/Downloads/HydroRIVERS_v10_na_shp/` if it is already extracted there.
@@ -311,7 +348,7 @@ other elevations use the same linear metres-to-block scale, including terrain
 below sea level. Bathymetry uses the same sea datum; its separate
 `BATHY_SCALE_MAXDEPTH` (currently 50) is the deepest ocean-bed Y, while
 `BATHY_EXAGGERATE_MIDPOINT` (currently 55) must lie between it and sea level.
-The v3 region header carries the source sea level to the mod. On 256-high
+The v4 region header carries the source sea level to the mod. On 256-high
 worlds source Y is unchanged; on 384- and 512-high worlds, the mod linearly
 maps absolute Y by `round(sourceY × (worldHeight - 1) / 255)`. The ocean
 surface, terrain, ocean bed, lake surfaces and beds, and river surfaces and
@@ -366,7 +403,8 @@ annual P and PET (mm/year), effective rainfall (the vegetation wetness value),
 its P/(P+PET) and P/200 cap inputs, and the separate weather rain factor
 P/(P+800). The command requires the server-control privilege. EMCL stores
 monthly temperatures but only **annual** P and PET, so monthly rainfall and PET
-cannot be reported. `/earthmap pos` remains available for terrain diagnostics.
+cannot be reported. `/earthmap pos` also reports the PNV class, inferred
+forest/shrub/grass density, fertility, soil depth, snow and terrain diagnostics.
 
 Earth terrain is filled before Vintage Story's rock-strata pass, so the game's
 procedural rock layers can replace the base granite. Ore generation runs in
@@ -395,6 +433,7 @@ Data Used/Acknowledgments
 - OpenStreetMap: https://www.openstreetmap.org/copyright
 - Natural Earth: https://www.naturalearthdata.com/
 - CHELSA V2.1 climatologies: https://chelsa-climate.org/datasets/chelsa_climatologies
+- Hengl et al. potential natural vegetation: https://doi.org/10.7910/DVN/QQHCIK
 - Reverse engineered existing Minecraft map programs, EarthTiles, earthtomc, worldpainter
 
 License 

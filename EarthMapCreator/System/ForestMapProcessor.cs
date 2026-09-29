@@ -4,28 +4,32 @@ namespace EarthMapCreator;
 
 internal static class ForestMapProcessor
 {
-    public static System.Func<int, int, int, int> ForestPostProcess = (val, blockX, blockZ) =>
+    public static readonly Func<int, int, int, int> ForestPostProcess = ForestDensity;
+    public static readonly Func<int, int, int, int> ShrubPostProcess = ShrubDensity;
+
+    private static int ForestDensity(int biome, int blockX, int blockZ) =>
+        ProfileAt(biome, blockX, blockZ).Forest;
+
+    private static int ShrubDensity(int biome, int blockX, int blockZ) =>
+        ProfileAt(biome, blockX, blockZ).Shrub;
+
+    private static VegetationProfile ProfileAt(int biome, int blockX, int blockZ)
     {
-        // Failsafe check for coordinates outside the map bounds.
-        // This check will now correctly catch negative regions.
-        if (!EarthMapCreator.Layers.Contains(blockX, blockZ))
+        RegionStore layers = EarthMapCreator.Layers;
+        EarthClimate climate = EarthMapCreator.ClimateData;
+        if (biome == 0 || layers == null || climate == null ||
+            !layers.Contains(blockX, blockZ) || !climate.Contains(blockX, blockZ) ||
+            layers.Get(MapPlane.LandMask, blockX, blockZ) == 0 ||
+            layers.Get(MapPlane.LakeMask, blockX, blockZ) != 0 ||
+            layers.Get(MapPlane.River, blockX, blockZ) != 0)
         {
-            return 0; // Outside the map, so no trees.
-        }
-        
-        // Get the landmask value for the current pixel.
-        int landmaskValue = EarthMapCreator.Layers.Get(MapPlane.LandMask, blockX, blockZ);
-
-        // If the landmask value is 0 (or whatever signifies water), return 0 for tree density.
-        if (landmaskValue == 0)
-        {
-            return 0;
+            return default;
         }
 
-        // The pixel is on land, so proceed with the original tree density calculation.
-        byte trees = (byte)val;
-        
-        trees = (byte)(EarthMapCreator.config.ForestMulti * val);
-        return trees;
-    };
+        return PotentialVegetation.Get(
+            biome,
+            climate.AnnualTemperature(blockX, blockZ),
+            climate.WarmestMonthTemperature(blockX, blockZ),
+            climate.VegetationWetness(blockX, blockZ));
+    }
 }
