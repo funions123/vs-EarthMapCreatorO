@@ -110,6 +110,7 @@ def fitted_river_surface(lines, transform, height, river, lake, land, fallback, 
     center = rasterize(((line, 1) for line in lines), out_shape=height.shape,
                        transform=transform, all_touched=True, dtype=np.uint8).astype(bool) & river
     pixels = np.flatnonzero(center)
+    del center
     if not len(pixels):
         return fallback
     rr, cc = np.divmod(pixels, cols)
@@ -145,8 +146,8 @@ def fitted_river_surface(lines, transform, height, river, lake, land, fallback, 
                     stack.append(j)
         components.append(np.array(group, dtype=np.int32))
 
-    lake_near = minimum_filter(np.where(lake, height, 255).astype(np.uint8), size=3) < 255
-    lake_levels = minimum_filter(np.where(lake, height, 255).astype(np.uint8), size=3)
+    lake_levels = minimum_filter(np.where(lake, height, 255), size=3)
+    lake_near = lake_levels < 255
     ocean_near = ~minimum_filter(land, size=3)
     parent = np.full(len(pixels), -1, np.int32)
     distance = np.full(len(pixels), np.inf)
@@ -178,6 +179,7 @@ def fitted_river_surface(lines, transform, height, river, lake, land, fallback, 
                     distance[j] = nd
                     parent[j] = i
                     heapq.heappush(queue, (nd, j))
+    del ocean_near, positions, component, components
 
     # Fit the longest trunk first; shorter tributaries share its confluence level.
     # Assign the chosen path atomically so every centerline pixel has one water Y.
@@ -279,6 +281,7 @@ def fitted_river_surface(lines, transform, height, river, lake, land, fallback, 
     # Lake-mouth targets can be lowered if surrounding ground is below lake Y.
     joining = river & lake_near
     surface[joining] = lake_levels[joining]
+    del joining, lake_near, lake_levels
     if shore_ceiling is not None:
         # Isotonic fitting can raise a low edge sample again. Lower the water
         # without moving the neighboring dry bank, then carry any new cuts
@@ -289,6 +292,7 @@ def fitted_river_surface(lines, transform, height, river, lake, land, fallback, 
         # before carrying cuts along the directed reaches.
         water_floor = minimum_filter(np.where(river, surface, 255), size=3)
         np.minimum(surface, water_floor, out=surface, where=river)
+        del water_floor
         _lower_downstream_rises(surface, way_cells)
         np.minimum(surface, shore_ceiling, out=surface, where=river)
     # The directed centerline pass can restore narrow crests across the

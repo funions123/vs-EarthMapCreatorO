@@ -3,7 +3,7 @@
   <PropertyGroup>
     <ModName>EarthMapCreatorO</ModName>
     <ModType>code</ModType>
-    <ModVersion>0.9.0-dev.1</ModVersion>
+    <ModVersion>0.9.0-dev.2</ModVersion>
     <ModId>earthmapcreatoro</ModId>
     <Description>Generate real-Earth maps for Vintage Story.</Description>
     <Side>universal</Side>

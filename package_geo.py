@@ -21,7 +21,7 @@ def main() -> None:
         raise ValueError(f"Invalid release version: {version!r}")
 
     files = [ROOT / "README", ROOT / "LICENSE", GEO / "requirements.txt",
-             GEO / "launch.py", GEO / "config.py"]
+             GEO / "launch.py", GEO / "config.py", GEO / "benchmark.py"]
     for package in ("pipeline", "util"):
         source = GEO / package
         files.extend(sorted(source.glob("*.py")))

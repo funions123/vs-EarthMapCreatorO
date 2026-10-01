@@ -20,7 +20,7 @@ Generate a map
 
 2. Place these inputs in `Geo/datasets/` (create the directory if needed):
    - `ds75_grd.zip` — [GMTED elevation](https://edcintl.cr.usgs.gov/downloads/sciweb1/shared/topo/downloads/GMTED/Grid_ZipFiles/ds75_grd.zip).
-   - `gebco_2025_sub_ice_topo.zip` — [GEBCO bathymetry](https://www.gebco.net/data_and_products/gridded_bathymetry_data/). An extracted GEBCO `.nc` file in `Geo/datasets/` also works.
+   - `gebco_2025_sub_ice_topo.zip` — [GEBCO 2025 bathymetry ZIP](https://dap.ceda.ac.uk/bodc/gebco/global/gebco_2025/sub_ice_topography_bathymetry/netcdf/gebco_2025_sub_ice_topo.zip?download=1) (~4.1 GB), available in the [CEDA archive listing](https://data.ceda.ac.uk/bodc/gebco/global/gebco_2025/sub_ice_topography_bathymetry/netcdf). An extracted GEBCO `.nc` file in `Geo/datasets/` also works.
    - `ne_10m_lakes.zip` — [Natural Earth lakes](https://www.naturalearthdata.com/downloads/10m-physical-vectors/).
    - `HydroRIVERS_v10_na_shp/` — extract the [North/Central America HydroRIVERS shapefile](https://www.hydrosheds.org/products/hydrorivers) here; keep its `.shp`, `.shx`, `.dbf`, and `.prj` files together.
 

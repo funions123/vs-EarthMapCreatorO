@@ -172,8 +172,9 @@ def _tif_to_png(
 
     with rasterio.open(str(src)) as r:
         if multiband and r.count >= 3:
-            bands = [r.read(i + 1).astype(np.float64) for i in range(3)]
+            bands = [r.read(i + 1) for i in range(3)]
             if src_range:
+                bands = [b.astype(np.float64) for b in bands]
                 bands = [
                     np.clip(
                         (b - src_range[0]) / (src_range[1] - src_range[0]) * (dst_range[1] - dst_range[0]) + dst_range[0],
@@ -181,24 +182,28 @@ def _tif_to_png(
                     )
                     for b in bands
                 ]
-            arr_rgb = np.stack([b.astype(np.uint8) for b in bands], axis=-1)
+            arr_rgb = np.stack([b.astype(np.uint8, copy=False) for b in bands], axis=-1)
             img = Image.fromarray(arr_rgb, mode="RGB")
         else:
-            arr = r.read(1).astype(np.float64)
+            arr = r.read(1)
             if src_range:
+                arr = arr.astype(np.float64)
                 lo, hi = src_range
                 t_lo, t_hi = dst_range
                 if hi == lo:
                     arr = np.full_like(arr, t_lo)
                 else:
                     arr = (arr - lo) / (hi - lo) * (t_hi - t_lo) + t_lo
-            arr = np.clip(arr, 0, 255).astype(np.uint8)
+            if arr.dtype != np.uint8:
+                arr = np.clip(arr, 0, 255).astype(np.uint8)
             img = Image.fromarray(arr, mode="L")
 
     if out_w and out_h:
         if resample is None:
             resample = Image.Resampling.LANCZOS if img.mode == "RGB" else Image.Resampling.BILINEAR
-        img = img.resize((out_w, out_h), resample)
+        resized = img.resize((out_w, out_h), resample)
+        img.close()
+        img = resized
 
     img.save(str(dst))
 

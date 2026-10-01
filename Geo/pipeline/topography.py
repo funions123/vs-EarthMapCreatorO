@@ -67,7 +67,7 @@ def run(work_dir: Path, datasets_dir: Path, grid: MasterGrid, bounds: Bounds4326
     # ------------------------------------------------------------------ #
     # 3. Bathymetry map (ocean depths → Byte)
     # ------------------------------------------------------------------ #
-    bathy_raw_arr = gebco_arr.copy().astype(np.float64)
+    bathy_raw_arr = gebco_arr.copy()
     bathy_raw_arr[bathy_raw_arr >= 0] = 0  # keep only negatives
 
     ocean_mask = gebco_arr < 0
@@ -78,7 +78,7 @@ def run(work_dir: Path, datasets_dir: Path, grid: MasterGrid, bounds: Bounds4326
 
     # Save raw bathymetry for reference
     save_array(
-        bathy_raw_arr.astype(np.int16),
+        bathy_raw_arr,
         str(bathy_dir / "bathymetry_raw.tif"),
         grid,
         dtype="int16",
@@ -88,6 +88,7 @@ def run(work_dir: Path, datasets_dir: Path, grid: MasterGrid, bounds: Bounds4326
     bathy_scaled = _scale_bathymetry(bathy_raw_arr, min_val, ocean_mask, cfg)
 
     save_array(bathy_scaled, str(work_dir / "bathymetry.tif"), grid, dtype="uint8", nodata=0)
+    del bathy_raw_arr, ocean_mask, bathy_scaled
 
     # Merge before scaling so the peak is measured only from the source used
     # for each map pixel. Keep signed metres until the final output grid is set.
@@ -167,7 +168,7 @@ def _scale_bathymetry(
 ) -> np.ndarray:
     """
     Apply linear or piecewise scaling to ocean depths.
-    Input: negative-only float array (0 = not ocean).
+    Input: negative-only elevation array (0 = not ocean).
     Output: uint8 array with BATHY_SCALE_MAXDEPTH..TERRAIN_SEA_LEVEL_Y range.
     """
     to_high = float(cfg.TERRAIN_SEA_LEVEL_Y)
@@ -176,39 +177,35 @@ def _scale_bathymetry(
         raise ValueError("BATHY_SCALE_MAXDEPTH must be between 1 and TERRAIN_SEA_LEVEL_Y")
     if cfg.BATHY_USE_PIECEWISE_SCALE and not to_low <= cfg.BATHY_EXAGGERATE_MIDPOINT <= to_high:
         raise ValueError("BATHY_EXAGGERATE_MIDPOINT must lie between ocean depth and sea level")
-    arr = bathy_raw.astype(np.float64)
-
-    if not cfg.BATHY_USE_PIECEWISE_SCALE:
-        # Linear: map [min_val, 0] -> [to_low, to_high]
-        abs_min = abs(min_val)
-        scaled = ((arr + abs_min) / abs_min) * (to_high - to_low) + to_low
-    else:
-        threshold = float(cfg.BATHY_EXAGGERATE_THRESHOLD)  # e.g. -100
-        mid = float(cfg.BATHY_EXAGGERATE_MIDPOINT)         # e.g. 80
-
-        # Shallow: arr in (threshold, 0) → map to [mid, to_high]
-        shallow_range = 0.0 - threshold
-        shallow = mid + ((arr - threshold) / shallow_range) * (to_high - mid)
-
-        # Deep: arr in [min_val, threshold] → map to [to_low, mid]
-        deep_range = threshold - min_val
-        if abs(deep_range) < 1e-9:
-            deep = np.full_like(arr, to_low)
+    result = np.zeros(bathy_raw.shape, dtype=np.uint8)
+    # Keep float64 evaluation and operation order, but only evaluate ocean
+    # cells in bounded row bands instead of allocating several world planes.
+    for start in range(0, bathy_raw.shape[0], 256):
+        section = slice(start, start + 256)
+        ocean = ocean_mask[section]
+        arr = bathy_raw[section][ocean].astype(np.float64)
+        if not cfg.BATHY_USE_PIECEWISE_SCALE:
+            abs_min = abs(min_val)
+            scaled = ((arr + abs_min) / abs_min) * (to_high - to_low) + to_low
         else:
-            deep = to_low + ((arr - min_val) / deep_range) * (mid - to_low)
-
-        scaled = np.where(arr > threshold, shallow, deep)
-
-    # Only apply to ocean pixels; set everything else to 0
-    result = np.where(ocean_mask, scaled, 0.0)
-    return np.clip(result, 0, 255).astype(np.uint8)
+            threshold = float(cfg.BATHY_EXAGGERATE_THRESHOLD)
+            mid = float(cfg.BATHY_EXAGGERATE_MIDPOINT)
+            shallow = mid + ((arr - threshold) / (0.0 - threshold)) * (to_high - mid)
+            deep_range = threshold - min_val
+            if abs(deep_range) < 1e-9:
+                deep = np.full_like(arr, to_low)
+            else:
+                deep = to_low + ((arr - min_val) / deep_range) * (mid - to_low)
+            scaled = np.where(arr > threshold, shallow, deep)
+        result[section][ocean] = np.clip(scaled, 0, 255).astype(np.uint8)
+    return result
 
 
 def _encode_terrain_y(elevation_metres: np.ndarray, cfg, peak=None) -> np.ndarray:
     """Map the highest positive elevation to Y=255, anchored at the sea datum."""
     elevation = np.asarray(elevation_metres)
     invalid = (elevation <= -32768) | ~np.isfinite(elevation)
-    valid = elevation[~invalid]
+    valid = elevation[~invalid] if peak is None else None
     sea = float(cfg.TERRAIN_SEA_LEVEL_Y)
     if not 1 <= sea < 255:
         raise ValueError("TERRAIN_SEA_LEVEL_Y must be between 1 and 254")

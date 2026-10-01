@@ -139,8 +139,7 @@ def _coastal_connectors(outlets, grid, height, land, lake_mask, cfg):
 
 def _grade_banks(height, river, surface, land, width, slope):
     covered = river.copy()
-    propagated = np.where(river, surface, 255).astype(np.uint8)
-    original = height.copy()
+    propagated = np.where(river, surface, 255)
     for distance in range(1, int(width) + 1):
         # A bank can touch several water columns. Grade from the highest one
         # on the first ring so a lower neighbor cannot cut below its waterline.
@@ -152,7 +151,8 @@ def _grade_banks(height, river, surface, land, width, slope):
         ring = (~covered) & land & (next_surface < 255)
         if not ring.any():
             break
-        natural = original[ring].astype(np.int16)
+        # Each ring is visited once, so these cells still hold natural terrain.
+        natural = height[ring].astype(np.int16)
         target = next_surface[ring].astype(np.int16)
         # Cut high banks down gradually; never build a berm above low terrain.
         height[ring] = np.minimum(natural, target + distance * int(slope)).astype(np.uint8)
@@ -174,36 +174,44 @@ def build_river_maps(reaches, grid: MasterGrid, height, land, lake_mask, cfg):
         all_touched=False, dtype=np.uint8,
     ).astype(bool) if reaches else np.zeros((rows, cols), dtype=bool)
     river = mask & (lake_mask == 0) & (land > 0)
+    del mask
     lake = lake_mask > 0
     # Water cannot stand above an adjacent dry bank; downstream fitting
     # carries this limit back through the connected river.
     dry = (land > 0) & ~river & ~lake
     shore_ceiling = minimum_filter(np.where(dry, height, 255), size=3)
+    del dry
     fit_height = height.copy()
     fit_height[river] = np.minimum(height[river], shore_ceiling[river])
     local_floor = minimum_filter(fit_height, size=int(cfg.RIVER_SURFACE_WINDOW_BLOCKS), mode="nearest")
     smoothed = median_filter(local_floor, size=3, mode="nearest")
     river_surface = np.zeros_like(height)
     river_surface[river] = np.minimum(smoothed[river], local_floor[river])
+    del local_floor, smoothed
 
     lake_neighbor_surface = minimum_filter(
-        np.where(lake, height, 255).astype(np.uint8), size=3, mode="nearest")
+        np.where(lake, height, 255), size=3, mode="nearest")
     lake_join = river & binary_dilation(lake, iterations=1)
     river_surface[lake_join] = lake_neighbor_surface[lake_join]
+    del lake_neighbor_surface, lake_join
     river_surface = fitted_river_surface([line for line, _ in reaches], transform, fit_height,
                                         river, lake, land > 0, river_surface, shore_ceiling)
+    del fit_height, lake, shore_ceiling
     shore_distance = distance_transform_cdt(river, metric="chessboard")
     river_depth = np.zeros_like(height)
     river_depth[river] = np.clip(
         shore_distance[river], int(cfg.RIVER_MIN_DEPTH_BLOCKS),
         int(cfg.RIVER_MAX_DEPTH_BLOCKS),
     ).astype(np.uint8)
+    del shore_distance
 
     # Fitted water fills the excavated channel; dry banks are only cut, not raised.
     height[river] = river_surface[river]
     _grade_banks(height, river, river_surface, land > 0,
                  cfg.RIVER_BANK_WIDTH_BLOCKS, cfg.RIVER_BANK_SLOPE)
-    return river.astype(np.uint8) * 255, river_surface, river_depth
+    mask = river.astype(np.uint8)
+    mask *= 255
+    return mask, river_surface, river_depth
 
 
 def write_river_maps(work_dir: Path, build_dir: Path, grid: MasterGrid, bounds, cfg):
