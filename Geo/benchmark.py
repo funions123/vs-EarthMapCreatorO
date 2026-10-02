@@ -83,6 +83,7 @@ def main():
     memory = process.memory_info()
     report["process_peak_rss_MiB"] = getattr(memory, "peak_wset", max(
         int(s["sampled_peak_rss_MiB"] * 2**20) for s in report["stages"].values())) / 2**20
+    report["working_raster_bytes"] = sum(path.stat().st_size for path in build.glob("*.tif"))
     # Decoded pixels avoid treating compression differences as map differences.
     for path in sorted(build.iterdir()):
         if path.suffix not in (".png", ".bin", ".regions"):

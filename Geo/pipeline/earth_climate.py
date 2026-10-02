@@ -113,13 +113,13 @@ def _clear(mapping):
 
 def _write_reference_heights(build_dir, final_shape, sample_shape, sea_level,
                              destination, records):
-    """Write mean terrain Y near every sample without loading a final PNG."""
+    """Write mean terrain Y near every sample from tiled final rasters."""
     names = ("heightmap", "landmask", "lake_mask")
-    sources = [rasterio.open(build_dir / f"{name}.png") for name in names]
+    sources = [rasterio.open(build_dir / f"{name}.tif") for name in names]
     try:
         height, width = final_shape
         if any((src.height, src.width) != final_shape for src in sources):
-            raise ValueError("Climate source PNG dimensions must match the final map")
+            raise ValueError("Climate source raster dimensions must match the final map")
 
         columns = np.arange(sample_shape[1]) * SPACING
         half = SPACING // 2
@@ -187,7 +187,7 @@ def run(build_dir: Path, datasets_dir: Path, grid, cfg):
     if width <= 0 or height <= 0 or width % 512 or height % 512:
         raise ValueError("Climate output dimensions must be positive multiples of 512")
     if not cfg.RESIZE_MAP and (width, height) != (grid.width, grid.height):
-        raise ValueError("Climate dimensions must match the final PNG/region grid")
+        raise ValueError("Climate dimensions must match the final raster/region grid")
 
     shape = ((height - 1) // SPACING + 1, (width - 1) // SPACING + 1)
     final = grid.transform * Affine.scale(grid.width / width, grid.height / height)

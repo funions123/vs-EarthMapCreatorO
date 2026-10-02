@@ -4,7 +4,8 @@ import unittest
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+import rasterio
+from util.working import create_layer
 
 from pipeline.translate import _feather_vegetation, _feather_pnv_band
 from pipeline.vegetation import _fill_nodata_land
@@ -48,11 +49,12 @@ class VegetationTests(unittest.TestCase):
         land[4, 25:] = 0
         with tempfile.TemporaryDirectory() as directory:
             build = Path(directory)
-            Image.fromarray(vegetation).save(build / "vegetation.png")
-            Image.fromarray(land).save(build / "landmask.png")
+            for name, pixels in (("vegetation", vegetation), ("landmask", land)):
+                with create_layer(build / f"{name}.tif", 30, 520) as output:
+                    output.write(pixels, 1)
             _feather_vegetation(build)
-            with Image.open(build / "vegetation.png") as result:
-                actual = np.asarray(result)
+            with rasterio.open(build / "vegetation.tif") as result:
+                actual = result.read(1)
         self.assertTrue(np.all(actual[land == 0] == 0))
         self.assertTrue(np.all(np.isin(actual[land != 0], [15, 27])))
         self.assertTrue(np.all(actual[:, :9][land[:, :9] != 0] == 15))

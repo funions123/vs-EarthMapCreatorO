@@ -7,13 +7,13 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
-from PIL import Image
 import rasterio
 from rasterio.crs import CRS
 from rasterio.transform import from_origin
 
 from pipeline.earth_climate import run
 from util.projection import MasterGrid
+from util.working import create_layer
 
 
 class EarthClimateTests(unittest.TestCase):
@@ -34,7 +34,8 @@ class EarthClimateTests(unittest.TestCase):
             terrain[:16, :16] = 200
             for name, pixels in (("heightmap", terrain), ("landmask", land),
                                  ("lake_mask", np.zeros_like(land))):
-                Image.fromarray(pixels).save(root / f"{name}.png")
+                with create_layer(root / f"{name}.tif", 512, 512) as output:
+                    output.write(pixels, 1)
 
             profile = dict(driver="GTiff", height=64, width=64, count=1,
                            dtype="uint16", crs="EPSG:4326", transform=transform,
@@ -133,7 +134,8 @@ class EarthClimateTests(unittest.TestCase):
             datasets.mkdir()
             terrain = np.full((512, 512), 60, dtype=np.uint8)
             for name in ("heightmap", "landmask", "lake_mask"):
-                Image.fromarray(terrain).save(root / f"{name}.png")
+                with create_layer(root / f"{name}.tif", 512, 512) as output:
+                    output.write(terrain, 1)
             grid = MasterGrid(from_origin(-1, 1, 1 / 512, 1 / 512),
                               512, 512, CRS.from_epsg(4326))
             config = SimpleNamespace(FINAL_WIDTH=512, FINAL_LENGTH=512,

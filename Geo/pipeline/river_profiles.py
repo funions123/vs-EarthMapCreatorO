@@ -1,8 +1,8 @@
 """Fit downstream-monotone water levels on rasterized HydroRIVERS lines."""
-from collections import deque
 import heapq
 
 import numpy as np
+from numba import njit
 from rasterio.features import rasterize
 from scipy.ndimage import maximum_filter, minimum_filter
 from scipy.spatial import cKDTree
@@ -50,19 +50,70 @@ def _lower_narrow_crests(surface, river):
     np.minimum(surface, opened, out=surface, where=river)
 
 
-def _lower_downstream_rises(surface, way_cells):
-    """Honor HydroRIVERS source-to-NEXT_DOWN order, including shared junctions."""
+@njit(cache=True)
+def _downstream_kernel(surface, rows, columns, offsets):
     changed = False
+    # Snapshot each reach before updating it: repeated cells must see the same
+    # values as the original minimum.accumulate + minimum.at implementation.
+    scratch = np.empty(len(rows), dtype=np.uint8)
     while True:
         pass_changed = False
-        for row, col, _ in way_cells:
-            levels = surface[row, col]
-            downhill = np.minimum.accumulate(levels)
-            if np.any(downhill < levels):
-                np.minimum.at(surface, (row, col), downhill)
-                pass_changed = changed = True
+        for reach in range(len(offsets) - 1):
+            start, stop = offsets[reach], offsets[reach + 1]
+            level = 255
+            for i in range(start, stop):
+                level = min(level, int(surface[rows[i], columns[i]]))
+                scratch[i] = level
+            for i in range(start, stop):
+                if scratch[i] < surface[rows[i], columns[i]]:
+                    surface[rows[i], columns[i]] = scratch[i]
+                    pass_changed = changed = True
         if not pass_changed:
             return changed
+
+
+def _lower_downstream_rises(surface, way_cells):
+    """Honor original reach order and snapshot semantics in native code."""
+    offsets = np.zeros(len(way_cells) + 1, dtype=np.int64)
+    for i, (row, _, _) in enumerate(way_cells):
+        offsets[i + 1] = offsets[i] + len(row)
+    rows = np.empty(offsets[-1], dtype=np.int32)
+    columns = np.empty_like(rows)
+    for i, (row, col, _) in enumerate(way_cells):
+        rows[offsets[i]:offsets[i + 1]] = row
+        columns[offsets[i]:offsets[i + 1]] = col
+    return _downstream_kernel(surface, rows, columns, offsets)
+
+
+@njit(cache=True)
+def _relax_surface(surface, river, water_y, water_x):
+    """FIFO relaxation with the original row/column neighbor traversal."""
+    rows, cols = surface.shape
+    capacity = max(1, len(water_y))
+    queue = np.empty(capacity, dtype=np.int64)
+    for i in range(len(water_y)):
+        queue[i] = water_y[i] * cols + water_x[i]
+    head = 0
+    count = len(water_y)
+    while count:
+        index = queue[head]
+        head = (head + 1) % capacity
+        count -= 1
+        row, col = index // cols, index % cols
+        ceiling = int(surface[row, col]) + 1
+        for nr in range(max(0, row - 1), min(rows, row + 2)):
+            for nc in range(max(0, col - 1), min(cols, col + 2)):
+                if river[nr, nc] and surface[nr, nc] > ceiling:
+                    surface[nr, nc] = ceiling
+                    if count == capacity:
+                        grown = np.empty(capacity * 2, dtype=np.int64)
+                        for i in range(count):
+                            grown[i] = queue[(head + i) % capacity]
+                        queue = grown
+                        capacity *= 2
+                        head = 0
+                    queue[(head + count) % capacity] = nr * cols + nc
+                    count += 1
 
 
 def _flatten_cross_channel(surface, water_y, water_x, nearest, center_count):
@@ -84,19 +135,9 @@ def _carve_drop_transition(surface, river):
 
 
 def _settle_surface(surface, river, water_y, water_x, nearest, center_count, way_cells):
-    cols = surface.shape[1]
     while True:
         flattened = _flatten_cross_channel(surface, water_y, water_x, nearest, center_count)
-        queue = deque(map(int, water_y * cols + water_x))
-        while queue:
-            index = queue.popleft()
-            row, col = divmod(index, cols)
-            ceiling = int(surface[row, col]) + 1
-            for nr in range(max(0, row - 1), min(surface.shape[0], row + 2)):
-                for nc in range(max(0, col - 1), min(cols, col + 2)):
-                    if river[nr, nc] and surface[nr, nc] > ceiling:
-                        surface[nr, nc] = ceiling
-                        queue.append(nr * cols + nc)
+        _relax_surface(surface, river, water_y, water_x)
         if not _lower_downstream_rises(surface, way_cells) and not flattened:
             return
 

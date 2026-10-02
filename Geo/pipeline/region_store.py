@@ -1,4 +1,4 @@
-"""Bake final PNGs into fixed-size, region-addressable game values.
+"""Bake tiled final rasters into fixed-size, region-addressable game values.
 
 Format: <8sIIIII header (magic, version, width, height, region size, sea Y),
 followed by X-major/Z-minor regions; each region holds nine 512x512 byte
@@ -34,11 +34,11 @@ def bake(build_dir: Path, width: int, height: int, sea_level: int, minimum_depth
     expected = HEADER.size + width // REGION * zregions * region_bytes
     try:
         with temporary.open("w+b") as output, ExitStack() as sources:
-            images = {name: sources.enter_context(rasterio.open(build_dir / (name + ".png")))
+            images = {name: sources.enter_context(rasterio.open(build_dir / (name + ".tif")))
                       for name in LAYERS}
             for name, image in images.items():
                 if (image.width, image.height) != (width, height):
-                    raise ValueError(f"{name}.png dimensions {(image.width, image.height)} != {(width, height)}")
+                    raise ValueError(f"{name}.tif dimensions {(image.width, image.height)} != {(width, height)}")
             output.write(HEADER.pack(MAGIC, VERSION, width, height, REGION, sea_level))
             output.truncate(expected)
             for rz in range(zregions):

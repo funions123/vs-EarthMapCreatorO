@@ -7,3 +7,4 @@ requests
 psutil
 Pillow
 scipy>=1.10
+numba>=0.64

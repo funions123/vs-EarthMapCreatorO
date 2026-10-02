@@ -1,10 +1,12 @@
-"""Convert intermediate rasters and build final-grid lake and river PNGs."""
+"""Build tiled final-grid layers and export immutable PNG previews."""
 from pathlib import Path
 
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
 from PIL import Image
+from rasterio.shutil import copy as copy_raster
+from util.working import create_layer
 
 # Final maps intentionally exceed Pillow's generic decompression-bomb threshold.
 Image.MAX_IMAGE_PIXELS = None
@@ -32,18 +34,18 @@ def run(work_dir: Path, grid: MasterGrid, bounds, cfg):
     out_h = cfg.FINAL_LENGTH if cfg.RESIZE_MAP else None
 
     # 1. Bathymetry (Byte, no rescale needed)
-    _tif_to_png(
+    _resize_byte_layer(
         work_dir / "bathymetry.tif",
-        build_dir / "bathymetry_heightmap.png",
+        build_dir / "bathymetry_heightmap.tif",
         out_w, out_h,
     )
 
-    _write_heightmap(work_dir / "cropped_dem.tif", build_dir / "heightmap.png",
+    _write_heightmap(work_dir / "cropped_dem.tif", build_dir / "heightmap.tif",
                      out_w, out_h, cfg)
 
-    _tif_to_png(
+    _resize_byte_layer(
         work_dir / "land_osm_mask.tif",
-        build_dir / "landmask.png",
+        build_dir / "landmask.tif",
         out_w, out_h,
         resample=Image.Resampling.NEAREST,
     )
@@ -51,26 +53,28 @@ def run(work_dir: Path, grid: MasterGrid, bounds, cfg):
     write_coastal_maps(build_dir, cfg)
 
     # Smooth class membership, not numeric biome IDs.
-    _tif_to_png(work_dir / "vegetation.tif", build_dir / "vegetation.png",
-                out_w, out_h, resample=Image.Resampling.NEAREST)
+    _resize_byte_layer(work_dir / "vegetation.tif", build_dir / "vegetation.tif",
+                       out_w, out_h, resample=Image.Resampling.NEAREST)
     _feather_vegetation(build_dir)
     (build_dir / "tree.png").unlink(missing_ok=True)
 
     # Local HydroRIVERS lines operate on the final grid after lakes establish precedence.
     write_river_maps(work_dir, build_dir, grid, bounds, cfg)
+    from pipeline.region_store import LAYERS
+    for name in LAYERS:
+        copy_raster(build_dir / f"{name}.tif", build_dir / f"{name}.png", driver="PNG")
 
     print("[translate] All PNGs written to", build_dir)
 
 
 def _feather_vegetation(build_dir: Path):
     """Feather categorical PNV edges in row bands while preserving water."""
-    target = build_dir / "vegetation.png"
-    temporary = build_dir / "vegetation.feathered.png"
+    target = build_dir / "vegetation.tif"
+    temporary = build_dir / "vegetation.feathered.tif"
     try:
-        with rasterio.open(target) as source, rasterio.open(build_dir / "landmask.png") as land:
+        with rasterio.open(target) as source, rasterio.open(build_dir / "landmask.tif") as land, create_layer(temporary, source.width, source.height) as output:
             if (source.width, source.height) != (land.width, land.height):
                 raise ValueError("PNV and final land mask dimensions do not match")
-            image = Image.new("L", (source.width, source.height))
             for y in range(0, source.height, 256):
                 rows = min(256, source.height - y)
                 start = max(0, y - 4)
@@ -79,9 +83,8 @@ def _feather_vegetation(build_dir: Path):
                 classes = source.read(1, window=window)
                 valid = land.read(1, window=window) != 0
                 classes[~valid] = 0
-                image.paste(Image.fromarray(
-                    _feather_pnv_band(classes, valid, y - start, rows, y)), (0, y))
-            image.save(temporary)
+                output.write(_feather_pnv_band(classes, valid, y - start, rows, y),
+                             1, window=rasterio.windows.Window(0, y, source.width, rows))
         temporary.replace(target)
     finally:
         temporary.unlink(missing_ok=True)
@@ -146,64 +149,47 @@ def _write_heightmap(src: Path, dst: Path, out_w, out_h, cfg):
         if not has_data:
             raise ValueError("No valid elevations on final output grid")
 
-        # Pillow's mapped image is written bandwise; each source read is bounded.
-        image = Image.new("L", (width, height))
-        for y in range(0, height, 512):
-            count = min(512, height - y)
-            band = _encode_terrain_y(rows(y, count), cfg, peak)
-            image.paste(Image.fromarray(band), (0, y))
-        image.save(dst)
+        with create_layer(dst, width, height) as output:
+            for y in range(0, height, 512):
+                count = min(512, height - y)
+                band = _encode_terrain_y(rows(y, count), cfg, peak)
+                output.write(band, 1, window=rasterio.windows.Window(0, y, width, count))
     print(f"[topo] Peak elevation {peak} m -> Y={255 if peak > 0 else int(cfg.TERRAIN_SEA_LEVEL_Y)}")
 
 
-def _tif_to_png(
-    src: Path,
-    dst: Path,
-    out_w, out_h,
-    src_range=None,
-    dst_range=None,
-    multiband: bool = False,
-    resample=None,
-):
-    """Read a TIF, optionally rescale, optionally resize, save as PNG."""
-    if not src.exists():
-        print(f"  Warning: {src.name} not found, skipping.")
-        return
+def _resize_byte_layer(src: Path, dst: Path, out_w, out_h, resample=None):
+    """Bound output memory while preserving Pillow's global byte resampling.
 
-    with rasterio.open(str(src)) as r:
-        if multiband and r.count >= 3:
-            bands = [r.read(i + 1) for i in range(3)]
-            if src_range:
-                bands = [b.astype(np.float64) for b in bands]
-                bands = [
-                    np.clip(
-                        (b - src_range[0]) / (src_range[1] - src_range[0]) * (dst_range[1] - dst_range[0]) + dst_range[0],
-                        dst_range[0], dst_range[1],
-                    )
-                    for b in bands
-                ]
-            arr_rgb = np.stack([b.astype(np.uint8, copy=False) for b in bands], axis=-1)
-            img = Image.fromarray(arr_rgb, mode="RGB")
-        else:
-            arr = r.read(1)
-            if src_range:
-                arr = arr.astype(np.float64)
-                lo, hi = src_range
-                t_lo, t_hi = dst_range
-                if hi == lo:
-                    arr = np.full_like(arr, t_lo)
-                else:
-                    arr = (arr - lo) / (hi - lo) * (t_hi - t_lo) + t_lo
-            if arr.dtype != np.uint8:
-                arr = np.clip(arr, 0, 255).astype(np.uint8)
-            img = Image.fromarray(arr, mode="L")
-
-    if out_w and out_h:
-        if resample is None:
-            resample = Image.Resampling.LANCZOS if img.mode == "RGB" else Image.Resampling.BILINEAR
-        resized = img.resize((out_w, out_h), resample)
-        img.close()
-        img = resized
-
-    img.save(str(dst))
+    Horizontal resizing uses Pillow. Vertical bilinear weights use its 22-bit
+    fixed-point rounding and global coordinates, avoiding float32 band boxes.
+    """
+    with rasterio.open(src) as source:
+        pixels = source.read(1)
+    height, width = out_h or pixels.shape[0], out_w or pixels.shape[1]
+    resample = Image.Resampling.BILINEAR if resample is None else resample
+    with Image.fromarray(pixels) as image:
+        horizontal = np.asarray(image.resize((width, pixels.shape[0]), resample))
+    source_height = horizontal.shape[0]
+    scale = source_height / height
+    support = max(1.0, scale)
+    with create_layer(dst, width, height) as output:
+        for y in range(0, height, 512):
+            count = min(512, height - y)
+            if resample == Image.Resampling.NEAREST:
+                indices = np.minimum(((np.arange(y, y + count) + 0.5) * scale).astype(int), source_height - 1)
+                band = horizontal[indices]
+            else:
+                band = np.empty((count, width), dtype=np.uint8)
+                for row in range(count):
+                    center = (y + row + 0.5) * scale
+                    start = max(0, int(center - support + 0.5))
+                    stop = min(source_height, int(center + support + 0.5))
+                    weights = np.maximum(0, 1 - np.abs((np.arange(start, stop) - center + 0.5) / support))
+                    weights /= weights.sum()
+                    coefficients = (weights * (1 << 22) + 0.5).astype(np.int32)
+                    values = np.full(width, 1 << 21, dtype=np.int32)
+                    for index, coefficient in zip(range(start, stop), coefficients):
+                        values += horizontal[index].astype(np.int32) * coefficient
+                    band[row] = np.clip(values >> 22, 0, 255).astype(np.uint8)
+            output.write(band, 1, window=rasterio.windows.Window(0, y, width, count))
 

@@ -7,7 +7,6 @@ import fiona
 import numpy as np
 import rasterio
 from affine import Affine
-from PIL import Image
 from rasterio.crs import CRS
 from rasterio.transform import from_origin
 from shapely.geometry import box, mapping
@@ -92,7 +91,7 @@ class LakeMapsTests(unittest.TestCase):
             TERRAIN_SEA_LEVEL_Y = 92
 
         source = Path(self.temp.name) / "signed-dem.tif"
-        output = Path(self.temp.name) / "heightmap.png"
+        output = Path(self.temp.name) / "heightmap.tif"
         metres = np.zeros((520, 4), dtype=np.int16)
         metres[0, 0] = 2000
         metres[519, 3] = 4500
@@ -103,8 +102,8 @@ class LakeMapsTests(unittest.TestCase):
             dst.write(metres, 1)
 
         _write_heightmap(source, output, None, None, Config)
-        with Image.open(output) as image:
-            heights = np.asarray(image)
+        with rasterio.open(output) as image:
+            heights = image.read(1)
         self.assertEqual(int(heights[519, 3]), 255)
         self.assertEqual(int(heights[0, 0]), 164)
         self.assertEqual(int(heights[519, 0]), 76)

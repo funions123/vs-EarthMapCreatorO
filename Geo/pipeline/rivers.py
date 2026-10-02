@@ -4,16 +4,19 @@ from pathlib import Path
 
 import fiona
 import numpy as np
+import rasterio
 from affine import Affine
-from PIL import Image
 from pyproj import Transformer
 from rasterio.features import rasterize
+from rasterio.windows import Window, bounds as window_bounds, transform as window_transform
 from scipy.ndimage import binary_dilation, distance_transform_cdt, distance_transform_edt, maximum_filter, median_filter, minimum_filter
 from shapely.geometry import LineString, Point, box, shape
 from shapely.ops import transform as project
+from shapely.strtree import STRtree
 
 from util.projection import MasterGrid
 from pipeline.river_profiles import fitted_river_surface
+from util.working import create_layer, expanded, windows
 
 def river_width_metres(discharge, pixel_size, cfg):
     """Scale a channel from its minimum width, capped in output pixels."""
@@ -214,22 +217,229 @@ def build_river_maps(reaches, grid: MasterGrid, height, land, lake_mask, cfg):
     return mask, river_surface, river_depth
 
 
-def write_river_maps(work_dir: Path, build_dir: Path, grid: MasterGrid, bounds, cfg):
-    with Image.open(build_dir / "heightmap.png") as image:
-        height = np.array(image.convert("L"), dtype=np.uint8)
-    with Image.open(build_dir / "landmask.png") as image:
-        land = np.array(image.convert("L"), dtype=np.uint8)
-    with Image.open(build_dir / "lake_mask.png") as image:
-        lake_mask = np.array(image.convert("L"), dtype=np.uint8)
+def _read(dataset, window):
+    return dataset.read(1, window=window)
 
-    reaches, _, outlets = load_river_lines(
-        work_dir.parent / "datasets", bounds, grid, height.shape, cfg)
-    connectors = _coastal_connectors(outlets, grid, height, land, lake_mask, cfg)
-    if connectors:
-        print(f"  Coastal river connectors: {len(connectors)}", flush=True)
-        reaches.extend(connectors)
-    mask, surface, depth = build_river_maps(reaches, grid, height, land, lake_mask, cfg)
-    Image.fromarray(height).save(build_dir / "heightmap.png")
-    Image.fromarray(mask).save(build_dir / "river.png")
-    Image.fromarray(surface).save(build_dir / "river_surface.png")
-    Image.fromarray(depth).save(build_dir / "river_depth.png")
+
+def _write_array(dataset, values):
+    for window in windows(dataset.width, dataset.height):
+        y = int(window.row_off)
+        x = int(window.col_off)
+        dataset.write(values[y:y + int(window.height), x:x + int(window.width)],
+                      1, window=window)
+
+
+def _coastal_connectors_from_layers(outlets, grid, height, land, lake_mask, cfg):
+    """Dataset-backed equivalent of ``_coastal_connectors``."""
+    rows, cols = height.height, height.width
+    transform = grid.transform @ Affine.scale(grid.width / cols, grid.height / rows)
+    inverse = ~transform
+    pixel_width, pixel_height = abs(transform.a), abs(transform.e)
+    limit = float(cfg.RIVER_COASTAL_CONNECTION_MAX_DISTANCE_METRES)
+    if limit <= 0:
+        return []
+    radius = math.ceil(limit / min(pixel_width, pixel_height)) + 2
+    sea_level = int(cfg.TERRAIN_SEA_LEVEL_Y)
+    connectors = []
+    for endpoint, discharge, upstream_area in outlets:
+        if upstream_area < cfg.RIVER_COASTAL_CONNECTION_MIN_UPSTREAM_AREA_SQKM:
+            continue
+        x, z = (round(value - 0.5) for value in inverse * endpoint)
+        if not (0 <= x < cols and 0 <= z < rows):
+            continue
+        x0, x1 = max(0, x - radius), min(cols, x + radius + 1)
+        z0, z1 = max(0, z - radius), min(rows, z + radius + 1)
+        window = Window(x0, z0, x1 - x0, z1 - z0)
+        height_part = _read(height, window)
+        land_part = _read(land, window)
+        lake_part = _read(lake_mask, window)
+        row, col = z - z0, x - x0
+        if land_part[row, col] == 0 or lake_part[row, col] or height_part[row, col] > sea_level:
+            continue
+        if np.all(land_part):
+            continue
+        distances, nearest = distance_transform_edt(
+            land_part > 0, sampling=(pixel_height, pixel_width), return_indices=True)
+        distance = distances[row, col]
+        if distance <= max(pixel_width, pixel_height) * 2 or distance > limit:
+            continue
+        coast_z, coast_x = nearest[:, row, col]
+        count = math.ceil(math.hypot(coast_x - col, coast_z - row))
+        path_z = np.rint(np.linspace(row, coast_z, count + 1)).astype(np.int32)
+        path_x = np.rint(np.linspace(col, coast_x, count + 1)).astype(np.int32)
+        if (np.any(height_part[path_z[:-1], path_x[:-1]] > sea_level)
+                or np.any(lake_part[path_z, path_x])
+                or np.any(land_part[path_z[:-1], path_x[:-1]] == 0)):
+            continue
+        coast_point = transform * (x0 + coast_x + 0.5, z0 + coast_z + 0.5)
+        connectors.append((LineString([endpoint, coast_point]), discharge))
+    return connectors
+
+
+def _query_geometries(tree, geometries, area):
+    candidates = tree.query(area)
+    if len(candidates) == 0:
+        return ()
+    if isinstance(candidates[0], (int, np.integer)):
+        return (geometries[int(index)] for index in candidates)
+    return candidates
+
+
+def _rasterize_river_layer(output, reaches, transform, land, lake_mask, pixel_size, cfg):
+    geometries = [line.buffer(river_width_metres(flow, pixel_size, cfg) / 2)
+                  for line, flow in reaches]
+    tree = STRtree(geometries) if geometries else None
+    for window in windows(output.width, output.height):
+        shapes = ()
+        if tree is not None:
+            area = box(*window_bounds(window, transform))
+            shapes = tuple(_query_geometries(tree, geometries, area))
+        if shapes:
+            river = rasterize(((geometry, 255) for geometry in shapes),
+                              out_shape=(int(window.height), int(window.width)),
+                              transform=window_transform(window, transform), fill=0,
+                              all_touched=False, dtype=np.uint8)
+        else:
+            river = np.zeros((int(window.height), int(window.width)), dtype=np.uint8)
+        river[(_read(lake_mask, window) > 0) | (_read(land, window) == 0)] = 0
+        output.write(river, 1, window=window)
+
+
+def _write_shore_and_fit(height, land, lake, river, shore, fit):
+    width, rows = height.width, height.height
+    for window in windows(width, rows):
+        outer, core = expanded(window, width, rows, 1)
+        h = _read(height, outer)
+        water = _read(river, outer) > 0
+        dry = (_read(land, outer) > 0) & ~water & (_read(lake, outer) == 0)
+        ceiling = minimum_filter(np.where(dry, h, 255), size=3)
+        fitted = h[core].copy()
+        core_water = water[core]
+        fitted[core_water] = np.minimum(fitted[core_water], ceiling[core][core_water])
+        shore.write(ceiling[core].astype(np.uint8), 1, window=window)
+        fit.write(fitted, 1, window=window)
+
+
+def _write_local_floor(fit, output, size):
+    halo = int(size) // 2 if int(size) % 2 else int(size) // 2 + 1
+    for window in windows(output.width, output.height):
+        outer, core = expanded(window, output.width, output.height, halo)
+        values = minimum_filter(_read(fit, outer), size=int(size), mode="nearest")
+        output.write(values[core], 1, window=window)
+
+
+def _write_fallback_surface(height, lake, river, local_floor, output):
+    width, rows = output.width, output.height
+    for window in windows(width, rows):
+        outer, core = expanded(window, width, rows, 1)
+        floor = _read(local_floor, outer)
+        smoothed = median_filter(floor, size=3, mode="nearest")
+        water = _read(river, outer) > 0
+        values = np.zeros((int(window.height), int(window.width)), dtype=np.uint8)
+        core_water = water[core]
+        values[core_water] = np.minimum(smoothed[core][core_water], floor[core][core_water])
+        lake_part = _read(lake, outer) > 0
+        lake_neighbor = minimum_filter(
+            np.where(lake_part, _read(height, outer), 255), size=3, mode="nearest")
+        joining = core_water & binary_dilation(lake_part, iterations=1)[core]
+        values[joining] = lake_neighbor[core][joining]
+        output.write(values, 1, window=window)
+
+
+def _write_depth(river, output, maximum, minimum):
+    halo = int(maximum)
+    all_water = all(np.all(_read(river, window))
+                    for window in windows(output.width, output.height))
+    for window in windows(output.width, output.height):
+        outer, core = expanded(window, output.width, output.height, halo)
+        water = _read(river, outer) > 0
+        values = np.zeros((int(window.height), int(window.width)), dtype=np.uint8)
+        core_water = water[core]
+        if core_water.any():
+            if water.all():
+                distance = np.full(water.shape, -1 if all_water else int(maximum), dtype=np.int32)
+            else:
+                distance = distance_transform_cdt(water, metric="chessboard")
+            values[core_water] = np.clip(distance[core][core_water], int(minimum),
+                                         int(maximum)).astype(np.uint8)
+        output.write(values, 1, window=window)
+
+
+def _write_prebank_height(height, river, surface, output):
+    for window in windows(output.width, output.height):
+        values = _read(height, window)
+        water = _read(river, window) > 0
+        levels = _read(surface, window)
+        values[water] = levels[water]
+        output.write(values, 1, window=window)
+
+
+def _write_banked_height(prebank, river, surface, land, output, width, slope):
+    halo = int(width) + 1
+    for window in windows(output.width, output.height):
+        outer, core = expanded(window, output.width, output.height, halo)
+        values = _read(prebank, outer)
+        _grade_banks(values, _read(river, outer) > 0, _read(surface, outer),
+                     _read(land, outer) > 0, width, slope)
+        output.write(values[core], 1, window=window)
+
+
+def write_river_maps(work_dir: Path, build_dir: Path, grid: MasterGrid, bounds, cfg):
+    """Build river TIFF layers with bounded local windows around the global fit."""
+    height_path = build_dir / "heightmap.tif"
+    land_path = build_dir / "landmask.tif"
+    lake_path = build_dir / "lake_mask.tif"
+    scratch_paths = [build_dir / name for name in (
+        "_river_fit_height.tif", "_river_shore_ceiling.tif", "_river_local_floor.tif",
+        "_river_prebank_height.tif", "_river_banked_height.tif")]
+    fit_path, shore_path, floor_path, prebank_path, banked_path = scratch_paths
+    try:
+        with rasterio.open(height_path) as height, rasterio.open(land_path) as land, rasterio.open(lake_path) as lake:
+            if ((land.width, land.height) != (height.width, height.height)
+                    or (lake.width, lake.height) != (height.width, height.height)):
+                raise ValueError("heightmap, landmask and lake_mask TIFF dimensions must match")
+            width, rows = height.width, height.height
+            transform = grid.transform @ Affine.scale(grid.width / width, grid.height / rows)
+            pixel_size = min(abs(transform.a), abs(transform.e))
+            reaches, _, outlets = load_river_lines(
+                work_dir.parent / "datasets", bounds, grid, (rows, width), cfg)
+            connectors = _coastal_connectors_from_layers(outlets, grid, height, land, lake, cfg)
+            if connectors:
+                print(f"  Coastal river connectors: {len(connectors)}", flush=True)
+                reaches.extend(connectors)
+
+            with create_layer(build_dir / "river.tif", width, rows) as river:
+                _rasterize_river_layer(river, reaches, transform, land, lake, pixel_size, cfg)
+                with create_layer(shore_path, width, rows) as shore, create_layer(fit_path, width, rows) as fit:
+                    _write_shore_and_fit(height, land, lake, river, shore, fit)
+                with rasterio.open(fit_path) as fit, create_layer(floor_path, width, rows) as floor:
+                    _write_local_floor(fit, floor, int(cfg.RIVER_SURFACE_WINDOW_BLOCKS))
+                with rasterio.open(floor_path) as floor, create_layer(build_dir / "river_surface.tif", width, rows) as surface:
+                    _write_fallback_surface(height, lake, river, floor, surface)
+
+                with rasterio.open(fit_path) as fit, rasterio.open(shore_path) as shore, rasterio.open(build_dir / "river_surface.tif", "r+") as surface:
+                    fit_values = fit.read(1)
+                    river_values = river.read(1).astype(bool)
+                    lake_values = lake.read(1).astype(bool)
+                    land_values = land.read(1).astype(bool)
+                    fallback = surface.read(1)
+                    shore_values = shore.read(1)
+                    fitted = fitted_river_surface(
+                        [line for line, _ in reaches], transform, fit_values, river_values,
+                        lake_values, land_values, fallback, shore_values)
+                    _write_array(surface, fitted)
+                    del fit_values, river_values, lake_values, land_values, fallback
+                    del shore_values, fitted
+
+                with create_layer(build_dir / "river_depth.tif", width, rows) as depth:
+                    _write_depth(river, depth, int(cfg.RIVER_MAX_DEPTH_BLOCKS),
+                                 int(cfg.RIVER_MIN_DEPTH_BLOCKS))
+                with rasterio.open(build_dir / "river_surface.tif") as surface, create_layer(prebank_path, width, rows) as prebank:
+                    _write_prebank_height(height, river, surface, prebank)
+                with rasterio.open(prebank_path) as prebank, rasterio.open(build_dir / "river_surface.tif") as surface, create_layer(banked_path, width, rows) as banked:
+                    _write_banked_height(prebank, river, surface, land, banked,
+                                         cfg.RIVER_BANK_WIDTH_BLOCKS, cfg.RIVER_BANK_SLOPE)
+        banked_path.replace(height_path)
+    finally:
+        for path in scratch_paths:
+            path.unlink(missing_ok=True)

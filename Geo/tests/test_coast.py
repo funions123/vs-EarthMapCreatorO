@@ -4,7 +4,8 @@ import unittest
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+import rasterio
+from util.working import create_layer
 
 from pipeline.coast import repair_coast, write_coastal_maps
 
@@ -54,14 +55,15 @@ class CoastTests(unittest.TestCase):
             build = Path(temporary)
             for name, pixels in (("heightmap", height), ("landmask", land),
                                  ("lake_mask", lake), ("bathymetry_heightmap", bathy)):
-                Image.fromarray(pixels).save(build / f"{name}.png")
+                with create_layer(build / f"{name}.tif", pixels.shape[1], pixels.shape[0]) as output:
+                    output.write(pixels, 1)
             write_coastal_maps(build, Config)
-            with Image.open(build / "heightmap.png") as image:
-                actual_height = np.array(image)
-            with Image.open(build / "landmask.png") as image:
-                actual_land = np.array(image)
-            with Image.open(build / "bathymetry_heightmap.png") as image:
-                actual_bathy = np.array(image)
+            with rasterio.open(build / "heightmap.tif") as image:
+                actual_height = image.read(1)
+            with rasterio.open(build / "landmask.tif") as image:
+                actual_land = image.read(1)
+            with rasterio.open(build / "bathymetry_heightmap.tif") as image:
+                actual_bathy = image.read(1)
         for z in (512, 513, 514):
             self.assertEqual(int(actual_height[z, 32]), 92)
         self.assertEqual(actual_bathy[509:512, 32].tolist(), [92, 92, 92])
