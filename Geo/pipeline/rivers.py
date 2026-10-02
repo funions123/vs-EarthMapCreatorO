@@ -16,6 +16,8 @@ from shapely.strtree import STRtree
 
 from util.projection import MasterGrid
 from pipeline.river_profiles import fitted_river_surface
+from pipeline.river_sampling import collect_inputs, write_values
+from pipeline.river_compact import fit_compact
 from util.working import create_layer, expanded, windows
 
 def river_width_metres(discharge, pixel_size, cfg):
@@ -221,14 +223,6 @@ def _read(dataset, window):
     return dataset.read(1, window=window)
 
 
-def _write_array(dataset, values):
-    for window in windows(dataset.width, dataset.height):
-        y = int(window.row_off)
-        x = int(window.col_off)
-        dataset.write(values[y:y + int(window.height), x:x + int(window.width)],
-                      1, window=window)
-
-
 def _coastal_connectors_from_layers(outlets, grid, height, land, lake_mask, cfg):
     """Dataset-backed equivalent of ``_coastal_connectors``."""
     rows, cols = height.height, height.width
@@ -418,18 +412,11 @@ def write_river_maps(work_dir: Path, build_dir: Path, grid: MasterGrid, bounds, 
                     _write_fallback_surface(height, lake, river, floor, surface)
 
                 with rasterio.open(fit_path) as fit, rasterio.open(shore_path) as shore, rasterio.open(build_dir / "river_surface.tif", "r+") as surface:
-                    fit_values = fit.read(1)
-                    river_values = river.read(1).astype(bool)
-                    lake_values = lake.read(1).astype(bool)
-                    land_values = land.read(1).astype(bool)
-                    fallback = surface.read(1)
-                    shore_values = shore.read(1)
-                    fitted = fitted_river_surface(
-                        [line for line, _ in reaches], transform, fit_values, river_values,
-                        lake_values, land_values, fallback, shore_values)
-                    _write_array(surface, fitted)
-                    del fit_values, river_values, lake_values, land_values, fallback
-                    del shore_values, fitted
+                    data = collect_inputs([line for line, _ in reaches], transform,
+                                          fit, river, lake, land, surface, shore)
+                    fitted = fit_compact([line for line, _ in reaches], transform, data)
+                    write_values(surface, data["water_pixels"], fitted)
+                    del data, fitted
 
                 with create_layer(build_dir / "river_depth.tif", width, rows) as depth:
                     _write_depth(river, depth, int(cfg.RIVER_MAX_DEPTH_BLOCKS),
