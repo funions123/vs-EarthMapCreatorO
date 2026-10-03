@@ -124,9 +124,8 @@ public sealed class EarthClimate : IDisposable
     private static void ValidateHeader(ReadOnlySpan<byte> data, int mapWidth, int mapHeight,
         out int spacing, out float lapsePerBlock, out int width, out int height)
     {
-        if (data.Length < HeaderSize || data[0] != 'E' || data[1] != 'M' || data[2] != 'C' || data[3] != 'L'
-            || BinaryPrimitives.ReadInt32LittleEndian(data[4..]) != 2)
-            throw new InvalidDataException("Unsupported Earth climate file; rebuild earthclimate.bin (EMCL v2, spacing 8).");
+        if (data.Length < HeaderSize || data[0] != 'E' || data[1] != 'M' || data[2] != 'C' || data[3] != 'L')
+            throw new InvalidDataException("Invalid Earth climate header; expected EMCL magic and a complete 24-byte header.");
 
         spacing = BinaryPrimitives.ReadInt32LittleEndian(data[16..]);
         lapsePerBlock = BinaryPrimitives.ReadSingleLittleEndian(data[20..]);
